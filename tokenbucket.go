@@ -33,7 +33,7 @@ type Bucket struct {
 func NewBucket(capacity, fillRate int64, dimension string, cfg *dynamodb.BucketBackendConfig, clock limiters.Clock, logger limiters.Logger) (*Bucket, error) {
 	backend, err := cfg.NewTokenBucketDynamoDB(context.Background())
 	if err != nil {
-		return nil, ErrIntializedBucketFailed
+		return nil, ErrInitializedBucketFailed
 	}
 
 	lockID := fmt.Sprintf("bucket_lock_%s", dimension)
