@@ -1,8 +1,10 @@
 {
   "cSpell.words": [
     "cenkalti",
+    "dynamodbcontainer",
     "mennanov",
     "ryosan",
+    "testcontainers",
     "tokenbucket"
   ]
 }

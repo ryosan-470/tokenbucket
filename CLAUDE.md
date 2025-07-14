@@ -35,8 +35,14 @@ This is a standard Go module. Common commands:
 # Build the module
 go build ./...
 
-# Run tests (if any exist)
+# Run tests
 go test ./...
+
+# Run tests with verbose output
+go test -v ./...
+
+# Run specific test
+go test -v ./storage/dynamodb/ -run TestLock_BasicLockUnlock
 
 # Get dependencies
 go mod tidy
@@ -47,6 +53,17 @@ go fmt ./...
 # Vet code
 go vet ./...
 ```
+
+## Testing
+
+The project includes comprehensive tests for the DynamoDB lock implementation:
+
+- **Basic lock/unlock functionality**: Tests successful acquisition and release of locks
+- **Concurrent access**: Tests that multiple processes cannot hold the same lock simultaneously
+- **Error handling**: Tests graceful handling of edge cases like unlocking non-existent locks
+- **Wrong owner scenarios**: Tests that locks can only be released by their owners
+
+Tests use **testcontainers** to spin up DynamoDB Local containers automatically, ensuring isolated test environments.
 
 ## Dependencies
 
