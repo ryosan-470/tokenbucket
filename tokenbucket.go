@@ -2,6 +2,7 @@ package tokenbucket
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/mennanov/limiters"
@@ -26,6 +27,7 @@ type Bucket struct {
 
 	backend *limiters.TokenBucketDynamoDB // Backend of the token bucket
 	bucket  *limiters.TokenBucket         // Underlying token bucket implementation
+	lock    *dynamodb.Lock                // DynamoDB lock for distributed coordination
 }
 
 func NewBucket(capacity, fillRate int64, dimension string, cfg *dynamodb.BucketBackendConfig, clock limiters.Clock, logger limiters.Logger) (*Bucket, error) {
@@ -34,10 +36,13 @@ func NewBucket(capacity, fillRate int64, dimension string, cfg *dynamodb.BucketB
 		return nil, ErrIntializedBucketFailed
 	}
 
+	lockID := fmt.Sprintf("bucket_lock_%s", dimension)
+	lock := cfg.NewLock(lockID)
+
 	bucket := limiters.NewTokenBucket(
 		capacity,
 		calculateFillRate(fillRate),
-		limiters.NewLockNoop(), // TODO: change to DynamoDB backend
+		lock,
 		backend,
 		limiters.NewSystemClock(), // TODO: change to custom clock if needed
 		logger,
@@ -50,6 +55,7 @@ func NewBucket(capacity, fillRate int64, dimension string, cfg *dynamodb.BucketB
 		Dimension: dimension,
 		backend:   backend,
 		bucket:    bucket,
+		lock:      lock,
 	}, nil
 }
 
@@ -74,6 +80,7 @@ func (b *Bucket) Get(ctx context.Context) (*Bucket, error) {
 		Dimension:   b.Dimension,
 		backend:     b.backend,
 		bucket:      b.bucket,
+		lock:        b.lock,
 	}, nil
 }
 
