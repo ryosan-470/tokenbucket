@@ -66,13 +66,13 @@ func createLockTable(t *testing.T, client *dynamodb.Client, tableName string) {
 		TableName: aws.String(tableName),
 		AttributeDefinitions: []types.AttributeDefinition{
 			{
-				AttributeName: aws.String("LockID"),
+				AttributeName: aws.String(attributeNameLockID),
 				AttributeType: types.ScalarAttributeTypeS,
 			},
 		},
 		KeySchema: []types.KeySchemaElement{
 			{
-				AttributeName: aws.String("LockID"),
+				AttributeName: aws.String(attributeNameOwnerID),
 				KeyType:       types.KeyTypeHash,
 			},
 		},
@@ -88,6 +88,18 @@ func createLockTable(t *testing.T, client *dynamodb.Client, tableName string) {
 		TableName: aws.String(tableName),
 	}, 30*time.Second); err != nil {
 		t.Fatalf("Failed to wait for table to be active: %v", err)
+	}
+
+	// Enable TTL on the table
+	_, err = client.UpdateTimeToLive(ctx, &dynamodb.UpdateTimeToLiveInput{
+		TableName: aws.String(tableName),
+		TimeToLiveSpecification: &types.TimeToLiveSpecification{
+			AttributeName: aws.String(attributeNameTTL),
+			Enabled:       aws.Bool(true),
+		},
+	})
+	if err != nil {
+		t.Fatalf("Failed to enable TTL on table: %v", err)
 	}
 }
 
@@ -180,8 +192,8 @@ func TestLock_TTLExpiration(t *testing.T) {
 		t.Fatalf("Failed to acquire lock: %v", err)
 	}
 
-	// Wait for TTL to expire
-	time.Sleep(10 * time.Second)
+	// Wait for TTL to expire (a bit longer than TTL)
+	time.Sleep(3 * time.Second)
 
 	// Create a new lock instance with the same ID
 	newLock := NewLock(client, tableName, "test-lock", 30*time.Second, 3, 5*time.Second)
