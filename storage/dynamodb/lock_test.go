@@ -9,13 +9,22 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"github.com/testcontainers/testcontainers-go"
 	dynamodbcontainer "github.com/testcontainers/testcontainers-go/modules/dynamodb"
+	"github.com/testcontainers/testcontainers-go/wait"
 )
 
 func setupDynamoDBLocal(t *testing.T) (*dynamodb.Client, func()) {
 	ctx := context.Background()
 
-	container, err := dynamodbcontainer.Run(ctx, "amazon/dynamodb-local:latest")
+	// Create wait strategy focusing on port availability and service readiness
+	waitStrategy := wait.ForExposedPort().
+		WithStartupTimeout(2 * time.Minute).
+		WithPollInterval(1 * time.Second)
+
+	container, err := dynamodbcontainer.Run(ctx, "amazon/dynamodb-local:latest",
+		testcontainers.WithWaitStrategy(waitStrategy),
+	)
 	if err != nil {
 		t.Fatalf("Failed to start DynamoDB Local container: %v", err)
 	}
@@ -81,7 +90,7 @@ func createLockTable(t *testing.T, client *dynamodb.Client, tableName string) {
 	waiter := dynamodb.NewTableExistsWaiter(client)
 	if err := waiter.Wait(ctx, &dynamodb.DescribeTableInput{
 		TableName: aws.String(tableName),
-	}, 30*time.Second); err != nil {
+	}, 2*time.Minute); err != nil {
 		t.Fatalf("Failed to wait for table to be active: %v", err)
 	}
 
