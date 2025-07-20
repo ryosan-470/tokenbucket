@@ -30,13 +30,6 @@ func setupDynamoDBLocal(t *testing.T) (*dynamodb.Client, func()) {
 
 	cfg, err := config.LoadDefaultConfig(ctx,
 		config.WithRegion("us-east-1"),
-		config.WithEndpointResolverWithOptions(aws.EndpointResolverWithOptionsFunc(
-			func(service, region string, options ...interface{}) (aws.Endpoint, error) {
-				return aws.Endpoint{
-					URL:           endpointURL,
-					SigningRegion: "us-east-1",
-				}, nil
-			})),
 		config.WithCredentialsProvider(aws.CredentialsProviderFunc(func(ctx context.Context) (aws.Credentials, error) {
 			return aws.Credentials{
 				AccessKeyID:     "test",
@@ -48,7 +41,9 @@ func setupDynamoDBLocal(t *testing.T) (*dynamodb.Client, func()) {
 		t.Fatalf("Failed to load AWS config: %v", err)
 	}
 
-	client := dynamodb.NewFromConfig(cfg)
+	client := dynamodb.NewFromConfig(cfg, func(o *dynamodb.Options) {
+		o.BaseEndpoint = aws.String(endpointURL)
+	})
 
 	cleanup := func() {
 		if err := container.Terminate(ctx); err != nil {
@@ -72,7 +67,7 @@ func createLockTable(t *testing.T, client *dynamodb.Client, tableName string) {
 		},
 		KeySchema: []types.KeySchemaElement{
 			{
-				AttributeName: aws.String(attributeNameOwnerID),
+				AttributeName: aws.String(attributeNameLockID),
 				KeyType:       types.KeyTypeHash,
 			},
 		},
