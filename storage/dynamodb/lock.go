@@ -39,14 +39,16 @@ func NewLock(client *dynamodb.Client, tableName, lockID string, ttl time.Duratio
 }
 
 const (
-	conditionExpressionForPutItem    = "attribute_not_exists(LockID)"
+	conditionExpressionForPutItem    = "attribute_not_exists(LockID) OR (#ttl < :current_time)"
 	conditionExpressionForDeleteItem = "attribute_exists(LockID) AND OwnerID = :owner_id"
 
 	attributeNameLockID  = "LockID"
 	attributeNameOwnerID = "OwnerID"
 	attributeNameTTL     = "TTL"
 
-	expressionAttributeNameOwnerID = ":owner_id"
+	expressionAttributeNameOwnerID     = ":owner_id"
+	expressionAttributeNameCurrentTime = ":current_time"
+	expressionAttributeNameTTL         = "#ttl"
 )
 
 var ErrLockAlreadyHeld = errors.New("lock is already held by another process")
@@ -55,6 +57,7 @@ var ErrLockAlreadyHeld = errors.New("lock is already held by another process")
 func (l *Lock) Lock(ctx context.Context) error {
 	l.ownerID = uuid.New().String()
 	ttl := time.Now().Add(l.ttl).Unix()
+	currentTime := time.Now().Unix()
 
 	input := &dynamodb.PutItemInput{
 		TableName: aws.String(l.tableName),
@@ -64,6 +67,12 @@ func (l *Lock) Lock(ctx context.Context) error {
 			attributeNameTTL:     &types.AttributeValueMemberN{Value: fmt.Sprintf("%d", ttl)},
 		},
 		ConditionExpression: aws.String(conditionExpressionForPutItem),
+		ExpressionAttributeNames: map[string]string{
+			expressionAttributeNameTTL: attributeNameTTL,
+		},
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			expressionAttributeNameCurrentTime: &types.AttributeValueMemberN{Value: fmt.Sprintf("%d", currentTime)},
+		},
 	}
 
 	operation := func() (string, error) {
