@@ -4,8 +4,15 @@
       "Bash(go get:*)",
       "Bash(go test:*)",
       "Bash(go mod:*)",
-      "Bash(go doc:*)"
+      "Bash(go doc:*)",
+      "Bash(go build:*)",
+      "Bash(go run:*)",
+      "Bash(mkdir:*)",
+      "Bash(mv:*)",
+      "mcp__ide__getDiagnostics"
     ],
-    "deny": []
+    "deny": [
+      "Bash(rm:*)"
+    ]
   }
 }
