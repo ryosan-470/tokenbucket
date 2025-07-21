@@ -1,27 +1,23 @@
-package benchmark
+package storage
 
 import (
 	"context"
+	"log"
 	"sync"
-	"testing"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
-	"github.com/testcontainers/testcontainers-go"
-	dynamodbcontainer "github.com/testcontainers/testcontainers-go/modules/dynamodb"
-	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/ryosan-470/tokenbucket"
 	dynamodbstorage "github.com/ryosan-470/tokenbucket/storage/dynamodb"
 )
 
-// BenchmarkHarness provides reusable setup for TokenBucket benchmarks
-type BenchmarkHarness struct {
+// AWSProvider provides TokenBucket benchmarks using real AWS DynamoDB
+type AWSProvider struct {
 	client          *dynamodb.Client
-	container       testcontainers.Container
 	bucketTableName string
 	lockTableName   string
 	mu              sync.Mutex
@@ -29,23 +25,23 @@ type BenchmarkHarness struct {
 }
 
 var (
-	globalHarness *BenchmarkHarness
-	setupOnce     sync.Once
+	globalAWSProvider *AWSProvider
+	awsSetupOnce      sync.Once
 )
 
-// GetHarness returns a singleton harness instance for reuse across benchmarks
-func GetHarness() *BenchmarkHarness {
-	setupOnce.Do(func() {
-		globalHarness = &BenchmarkHarness{
-			bucketTableName: "benchmark-token-bucket",
-			lockTableName:   "benchmark-lock-table",
+// GetAWSProvider returns a singleton AWSProvider instance for reuse across benchmarks
+func GetAWSProvider() *AWSProvider {
+	awsSetupOnce.Do(func() {
+		globalAWSProvider = &AWSProvider{
+			bucketTableName: "tokenbucket-benchmark-bucket",
+			lockTableName:   "tokenbucket-benchmark-lock",
 		}
 	})
-	return globalHarness
+	return globalAWSProvider
 }
 
-// Setup initializes DynamoDB Local container and creates tables
-func (h *BenchmarkHarness) Setup(ctx context.Context) error {
+// Setup initializes AWS DynamoDB client using AWS_PROFILE environment variable
+func (h *AWSProvider) Setup(ctx context.Context) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -53,48 +49,19 @@ func (h *BenchmarkHarness) Setup(ctx context.Context) error {
 		return nil
 	}
 
-	// Start DynamoDB Local container
-	waitStrategy := wait.ForExposedPort().
-		WithStartupTimeout(2 * time.Minute).
-		WithPollInterval(1 * time.Second)
-
-	container, err := dynamodbcontainer.Run(ctx, "amazon/dynamodb-local:latest",
-		testcontainers.WithWaitStrategy(waitStrategy),
-	)
-	if err != nil {
-		return err
-	}
-	h.container = container
-
-	endpoint, err := container.ConnectionString(ctx)
+	// Load AWS configuration from AWS_PROFILE environment variable
+	cfg, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
 		return err
 	}
 
-	endpointURL := "http://" + endpoint
+	h.client = dynamodb.NewFromConfig(cfg)
 
-	cfg, err := config.LoadDefaultConfig(ctx,
-		config.WithRegion("us-east-1"),
-		config.WithCredentialsProvider(aws.CredentialsProviderFunc(func(ctx context.Context) (aws.Credentials, error) {
-			return aws.Credentials{
-				AccessKeyID:     "test",
-				SecretAccessKey: "test",
-			}, nil
-		})),
-	)
-	if err != nil {
+	// Create tables if they don't exist
+	if err := h.createTokenBucketTableIfNotExists(ctx); err != nil {
 		return err
 	}
-
-	h.client = dynamodb.NewFromConfig(cfg, func(o *dynamodb.Options) {
-		o.BaseEndpoint = aws.String(endpointURL)
-	})
-
-	// Create tables
-	if err := h.createTokenBucketTable(ctx); err != nil {
-		return err
-	}
-	if err := h.createLockTable(ctx); err != nil {
+	if err := h.createLockTableIfNotExists(ctx); err != nil {
 		return err
 	}
 
@@ -102,16 +69,14 @@ func (h *BenchmarkHarness) Setup(ctx context.Context) error {
 	return nil
 }
 
-// Cleanup terminates the DynamoDB container
-func (h *BenchmarkHarness) Cleanup(ctx context.Context) error {
-	if h.container != nil {
-		return h.container.Terminate(ctx)
-	}
+// Cleanup is a no-op for AWS provider since we don't manage any resources
+func (h *AWSProvider) Cleanup(ctx context.Context) error {
+	// Nothing to cleanup for AWS harness
 	return nil
 }
 
 // CreateBucketConfig creates a bucket configuration for the given dimension
-func (h *BenchmarkHarness) CreateBucketConfig(dimension string) *dynamodbstorage.BucketBackendConfig {
+func (h *AWSProvider) CreateBucketConfig(dimension string) *dynamodbstorage.BucketBackendConfig {
 	return dynamodbstorage.NewBucketBackendConfig(
 		h.client,
 		h.bucketTableName,
@@ -124,13 +89,26 @@ func (h *BenchmarkHarness) CreateBucketConfig(dimension string) *dynamodbstorage
 }
 
 // CreateBucket creates a TokenBucket with the specified configuration
-func (h *BenchmarkHarness) CreateBucket(capacity, fillRate int64, dimension string, opts ...tokenbucket.Option) (*tokenbucket.Bucket, error) {
+func (h *AWSProvider) CreateBucket(capacity, fillRate int64, dimension string, opts ...tokenbucket.Option) (*tokenbucket.Bucket, error) {
 	cfg := h.CreateBucketConfig(dimension)
 	return tokenbucket.NewBucket(capacity, fillRate, dimension, cfg, opts...)
 }
 
-func (h *BenchmarkHarness) createTokenBucketTable(ctx context.Context) error {
-	_, err := h.client.CreateTable(ctx, &dynamodb.CreateTableInput{
+func (h *AWSProvider) createTokenBucketTableIfNotExists(ctx context.Context) error {
+	// Check if table exists
+	_, err := h.client.DescribeTable(ctx, &dynamodb.DescribeTableInput{
+		TableName: aws.String(h.bucketTableName),
+	})
+
+	if err == nil {
+		log.Printf("Token bucket table '%s' already exists", h.bucketTableName)
+		return nil
+	}
+
+	// Table doesn't exist, create it
+	log.Printf("Creating token bucket table '%s'...", h.bucketTableName)
+
+	_, err = h.client.CreateTable(ctx, &dynamodb.CreateTableInput{
 		TableName: aws.String(h.bucketTableName),
 		AttributeDefinitions: []types.AttributeDefinition{
 			{
@@ -158,13 +136,15 @@ func (h *BenchmarkHarness) createTokenBucketTable(ctx context.Context) error {
 		return err
 	}
 
+	// Wait for table to be created
 	waiter := dynamodb.NewTableExistsWaiter(h.client)
 	if err := waiter.Wait(ctx, &dynamodb.DescribeTableInput{
 		TableName: aws.String(h.bucketTableName),
-	}, 2*time.Minute); err != nil {
+	}, 5*time.Minute); err != nil {
 		return err
 	}
 
+	// Enable TTL
 	_, err = h.client.UpdateTimeToLive(ctx, &dynamodb.UpdateTimeToLiveInput{
 		TableName: aws.String(h.bucketTableName),
 		TimeToLiveSpecification: &types.TimeToLiveSpecification{
@@ -172,11 +152,29 @@ func (h *BenchmarkHarness) createTokenBucketTable(ctx context.Context) error {
 			Enabled:       aws.Bool(true),
 		},
 	})
-	return err
+	if err != nil {
+		return err
+	}
+
+	log.Printf("Token bucket table '%s' created successfully", h.bucketTableName)
+	return nil
 }
 
-func (h *BenchmarkHarness) createLockTable(ctx context.Context) error {
-	_, err := h.client.CreateTable(ctx, &dynamodb.CreateTableInput{
+func (h *AWSProvider) createLockTableIfNotExists(ctx context.Context) error {
+	// Check if table exists
+	_, err := h.client.DescribeTable(ctx, &dynamodb.DescribeTableInput{
+		TableName: aws.String(h.lockTableName),
+	})
+
+	if err == nil {
+		log.Printf("Lock table '%s' already exists", h.lockTableName)
+		return nil
+	}
+
+	// Table doesn't exist, create it
+	log.Printf("Creating lock table '%s'...", h.lockTableName)
+
+	_, err = h.client.CreateTable(ctx, &dynamodb.CreateTableInput{
 		TableName: aws.String(h.lockTableName),
 		AttributeDefinitions: []types.AttributeDefinition{
 			{
@@ -196,13 +194,15 @@ func (h *BenchmarkHarness) createLockTable(ctx context.Context) error {
 		return err
 	}
 
+	// Wait for table to be created
 	waiter := dynamodb.NewTableExistsWaiter(h.client)
 	if err := waiter.Wait(ctx, &dynamodb.DescribeTableInput{
 		TableName: aws.String(h.lockTableName),
-	}, 2*time.Minute); err != nil {
+	}, 5*time.Minute); err != nil {
 		return err
 	}
 
+	// Enable TTL
 	_, err = h.client.UpdateTimeToLive(ctx, &dynamodb.UpdateTimeToLiveInput{
 		TableName: aws.String(h.lockTableName),
 		TimeToLiveSpecification: &types.TimeToLiveSpecification{
@@ -210,19 +210,10 @@ func (h *BenchmarkHarness) createLockTable(ctx context.Context) error {
 			Enabled:       aws.Bool(true),
 		},
 	})
-	return err
-}
-
-// BenchmarkSetup is a helper function for benchmark setup
-func BenchmarkSetup(b *testing.B) *BenchmarkHarness {
-	b.Helper()
-	
-	ctx := context.Background()
-	harness := GetHarness()
-	
-	if err := harness.Setup(ctx); err != nil {
-		b.Fatalf("Failed to setup benchmark harness: %v", err)
+	if err != nil {
+		return err
 	}
-	
-	return harness
+
+	log.Printf("Lock table '%s' created successfully", h.lockTableName)
+	return nil
 }

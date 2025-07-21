@@ -10,7 +10,8 @@ import (
 	"time"
 
 	"github.com/ryosan-470/tokenbucket"
-	benchmark "github.com/ryosan-470/tokenbucket/benchmark"
+	"github.com/ryosan-470/tokenbucket/benchmark"
+	"github.com/ryosan-470/tokenbucket/benchmark/storage"
 )
 
 type Config struct {
@@ -22,6 +23,7 @@ type Config struct {
 	Dimensions  int
 	WithLock    bool
 	OutputFile  string
+	Backend     string
 }
 
 func main() {
@@ -29,31 +31,33 @@ func main() {
 
 	log.Printf("Starting 60-second benchmark with config: %+v", cfg)
 
-	// Setup harness
-	harness := benchmark.GetHarness()
+	// Setup provider based on backend
+	provider, err := getProvider(cfg)
+	if err != nil {
+		log.Fatalf("Failed to get provider: %v", err)
+	}
 	ctx := context.Background()
 
-	if err := harness.Setup(ctx); err != nil {
-		log.Fatalf("Failed to setup harness: %v", err)
+	if err := provider.Setup(ctx); err != nil {
+		log.Fatalf("Failed to setup provider: %v", err)
 	}
 
 	defer func() {
-		if err := harness.Cleanup(ctx); err != nil {
-			log.Printf("Warning: Failed to cleanup harness: %v", err)
+		if err := provider.Cleanup(ctx); err != nil {
+			log.Printf("Warning: Failed to cleanup provider: %v", err)
 		}
 	}()
 
 	// Run benchmark based on scenario
 	var report benchmark.Report
-	var err error
 
 	switch cfg.Scenario {
 	case "single":
-		report, err = runSingleDimensionTest(harness, cfg)
+		report, err = runSingleDimensionTest(provider, cfg)
 	case "multi":
-		report, err = runMultiDimensionTest(harness, cfg)
+		report, err = runMultiDimensionTest(provider, cfg)
 	case "lock-comparison":
-		report, err = runLockComparisonTest(harness, cfg)
+		report, err = runLockComparisonTest(provider, cfg)
 	default:
 		log.Fatalf("Unknown scenario: %s", cfg.Scenario)
 	}
@@ -84,19 +88,20 @@ func parseFlags() Config {
 	flag.IntVar(&cfg.Dimensions, "dimensions", 10, "Number of dimensions for multi-dimension test")
 	flag.BoolVar(&cfg.WithLock, "with-lock", true, "Use distributed locking")
 	flag.StringVar(&cfg.OutputFile, "output", "", "Output file for results (optional)")
+	flag.StringVar(&cfg.Backend, "backend", "local", "Backend type (local, aws)")
 
 	flag.Parse()
 
 	return cfg
 }
 
-func runSingleDimensionTest(harness *benchmark.BenchmarkHarness, cfg Config) (benchmark.Report, error) {
+func runSingleDimensionTest(provider storage.Provider, cfg Config) (benchmark.Report, error) {
 	var opts []tokenbucket.Option
 	if !cfg.WithLock {
 		opts = append(opts, tokenbucket.WithoutLock())
 	}
 
-	bucket, err := harness.CreateBucket(cfg.Capacity, cfg.FillRate, "load-test-single", opts...)
+	bucket, err := provider.CreateBucket(cfg.Capacity, cfg.FillRate, "load-test-single", opts...)
 	if err != nil {
 		return benchmark.Report{}, fmt.Errorf("failed to create bucket: %w", err)
 	}
@@ -107,7 +112,7 @@ func runSingleDimensionTest(harness *benchmark.BenchmarkHarness, cfg Config) (be
 	return runLoadTest(bucket, metrics, cfg)
 }
 
-func runMultiDimensionTest(harness *benchmark.BenchmarkHarness, cfg Config) (benchmark.Report, error) {
+func runMultiDimensionTest(provider storage.Provider, cfg Config) (benchmark.Report, error) {
 	var opts []tokenbucket.Option
 	if !cfg.WithLock {
 		opts = append(opts, tokenbucket.WithoutLock())
@@ -116,7 +121,7 @@ func runMultiDimensionTest(harness *benchmark.BenchmarkHarness, cfg Config) (ben
 	// Create buckets for each dimension
 	buckets := make([]*tokenbucket.Bucket, cfg.Dimensions)
 	for i := 0; i < cfg.Dimensions; i++ {
-		bucket, err := harness.CreateBucket(cfg.Capacity/5, cfg.FillRate/5, fmt.Sprintf("load-test-multi-%d", i), opts...)
+		bucket, err := provider.CreateBucket(cfg.Capacity/5, cfg.FillRate/5, fmt.Sprintf("load-test-multi-%d", i), opts...)
 		if err != nil {
 			return benchmark.Report{}, fmt.Errorf("failed to create bucket %d: %w", i, err)
 		}
@@ -129,10 +134,10 @@ func runMultiDimensionTest(harness *benchmark.BenchmarkHarness, cfg Config) (ben
 	return runMultiDimensionalLoadTest(buckets, metrics, cfg)
 }
 
-func runLockComparisonTest(harness *benchmark.BenchmarkHarness, cfg Config) (benchmark.Report, error) {
+func runLockComparisonTest(provider storage.Provider, cfg Config) (benchmark.Report, error) {
 	// Run both with and without lock
 	log.Println("Running with lock...")
-	bucketWithLock, err := harness.CreateBucket(cfg.Capacity, cfg.FillRate, "load-test-with-lock")
+	bucketWithLock, err := provider.CreateBucket(cfg.Capacity, cfg.FillRate, "load-test-with-lock")
 	if err != nil {
 		return benchmark.Report{}, fmt.Errorf("failed to create bucket with lock: %w", err)
 	}
@@ -144,7 +149,7 @@ func runLockComparisonTest(harness *benchmark.BenchmarkHarness, cfg Config) (ben
 	}
 
 	log.Println("Running without lock...")
-	bucketWithoutLock, err := harness.CreateBucket(cfg.Capacity, cfg.FillRate, "load-test-without-lock", tokenbucket.WithoutLock())
+	bucketWithoutLock, err := provider.CreateBucket(cfg.Capacity, cfg.FillRate, "load-test-without-lock", tokenbucket.WithoutLock())
 	if err != nil {
 		return benchmark.Report{}, fmt.Errorf("failed to create bucket without lock: %w", err)
 	}
@@ -321,8 +326,20 @@ func printLockComparison(withLock, withoutLock benchmark.Report) {
 		float64(withLock.LatencyP95)/float64(withoutLock.LatencyP95))
 }
 
-func saveReport(report benchmark.Report, cfg Config) error {
+func saveReport(_ benchmark.Report, cfg Config) error {
 	// TODO: Implement JSON/CSV output
 	log.Printf("Saving report to %s (not implemented yet)", cfg.OutputFile)
 	return nil
+}
+
+// getProvider returns the appropriate storage provider based on configuration
+func getProvider(cfg Config) (storage.Provider, error) {
+	switch cfg.Backend {
+	case "local":
+		return storage.GetLocalProvider(), nil
+	case "aws":
+		return storage.GetAWSProvider(), nil
+	default:
+		return nil, fmt.Errorf("unknown backend: %s", cfg.Backend)
+	}
 }

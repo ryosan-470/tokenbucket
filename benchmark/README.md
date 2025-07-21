@@ -5,10 +5,18 @@ This directory contains benchmark tests for performance evaluation of the TokenB
 ## Structure
 
 - `harness.go` - DynamoDB Local setup and common configuration
+- `aws_harness.go` - AWS DynamoDB setup and configuration 
 - `metrics.go` - Metrics collection and analysis
 - `tokenbucket_test.go` - Go standard benchmark tests
 - `cmd/benchmark/main.go` - CLI for 60-second sustained load tests
 - `results/` - Benchmark results storage directory
+
+## Backend Support
+
+The benchmark suite supports two DynamoDB backends:
+
+- **Local** (default): Uses DynamoDB Local via testcontainers for isolated testing
+- **AWS**: Uses real AWS DynamoDB with AWS_PROFILE authentication
 
 ## Benchmark Scenarios
 
@@ -53,6 +61,8 @@ go test -bench=BenchmarkWithMetrics -benchtime=30s -v
 ```
 
 ### 60-Second Sustained Tests
+
+#### DynamoDB Local (Default)
 ```bash
 cd cmd/benchmark
 
@@ -68,6 +78,29 @@ go run main.go -scenario=lock-comparison -concurrency=20 -duration=60s
 # Test with custom configuration
 go run main.go -scenario=single -capacity=500 -fill-rate=50 -concurrency=25 -duration=120s
 ```
+
+#### AWS DynamoDB
+```bash
+cd cmd/benchmark
+
+# Set AWS profile (required for AWS backend)
+export AWS_PROFILE=your-aws-profile
+
+# Single dimension test with AWS backend
+go run main.go -backend=aws -scenario=single -concurrency=50 -duration=60s
+
+# Multi dimension test with AWS backend
+go run main.go -backend=aws -scenario=multi -dimensions=30 -concurrency=60 -duration=60s
+
+# Lock comparison test on AWS
+go run main.go -backend=aws -scenario=lock-comparison -concurrency=20 -duration=60s
+```
+
+**Note**: The AWS backend will automatically create the required DynamoDB tables with fixed names if they don't exist:
+- Bucket table: `tokenbucket-benchmark-bucket` (PK: String, SK: String, TTL: `_TTL`)
+- Lock table: `tokenbucket-benchmark-lock` (LockID: String, TTL: `TTL`)
+
+Both tables are created with Pay-Per-Request billing mode for cost efficiency.
 
 ## Metrics
 

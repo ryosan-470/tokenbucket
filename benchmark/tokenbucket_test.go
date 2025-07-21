@@ -9,13 +9,14 @@ import (
 	"time"
 
 	"github.com/ryosan-470/tokenbucket"
+	"github.com/ryosan-470/tokenbucket/benchmark/storage"
 )
 
 // BenchmarkSingleDimensionSequential tests single-threaded performance
 func BenchmarkSingleDimensionSequential(b *testing.B) {
-	harness := BenchmarkSetup(b)
+	provider := storage.BenchmarkSetup(b)
 	
-	bucket, err := harness.CreateBucket(1000, 100, "bench-sequential")
+	bucket, err := provider.CreateBucket(1000, 100, "bench-sequential")
 	if err != nil {
 		b.Fatalf("Failed to create bucket: %v", err)
 	}
@@ -34,9 +35,9 @@ func BenchmarkSingleDimensionConcurrent(b *testing.B) {
 	
 	for _, concurrency := range concurrencyLevels {
 		b.Run(fmt.Sprintf("Concurrent-%d", concurrency), func(b *testing.B) {
-			harness := BenchmarkSetup(b)
+			provider := storage.BenchmarkSetup(b)
 			
-			bucket, err := harness.CreateBucket(1000, 100, fmt.Sprintf("bench-concurrent-%d", concurrency))
+			bucket, err := provider.CreateBucket(1000, 100, fmt.Sprintf("bench-concurrent-%d", concurrency))
 			if err != nil {
 				b.Fatalf("Failed to create bucket: %v", err)
 			}
@@ -56,9 +57,9 @@ func BenchmarkSingleDimensionConcurrent(b *testing.B) {
 
 // BenchmarkSingleDimensionWithLock tests performance with distributed locking
 func BenchmarkSingleDimensionWithLock(b *testing.B) {
-	harness := BenchmarkSetup(b)
+	provider := storage.BenchmarkSetup(b)
 	
-	bucket, err := harness.CreateBucket(1000, 100, "bench-with-lock")
+	bucket, err := provider.CreateBucket(1000, 100, "bench-with-lock")
 	if err != nil {
 		b.Fatalf("Failed to create bucket: %v", err)
 	}
@@ -76,9 +77,9 @@ func BenchmarkSingleDimensionWithLock(b *testing.B) {
 
 // BenchmarkSingleDimensionWithoutLock tests performance without distributed locking
 func BenchmarkSingleDimensionWithoutLock(b *testing.B) {
-	harness := BenchmarkSetup(b)
+	provider := storage.BenchmarkSetup(b)
 	
-	bucket, err := harness.CreateBucket(1000, 100, "bench-without-lock", tokenbucket.WithoutLock())
+	bucket, err := provider.CreateBucket(1000, 100, "bench-without-lock", tokenbucket.WithoutLock())
 	if err != nil {
 		b.Fatalf("Failed to create bucket: %v", err)
 	}
@@ -100,12 +101,12 @@ func BenchmarkMultiDimensionDistributed(b *testing.B) {
 	
 	for _, dimCount := range dimensionCounts {
 		b.Run(fmt.Sprintf("Dimensions-%d", dimCount), func(b *testing.B) {
-			harness := BenchmarkSetup(b)
+			provider := storage.BenchmarkSetup(b)
 			
 			// Create buckets for each dimension
 			buckets := make([]*tokenbucket.Bucket, dimCount)
 			for i := 0; i < dimCount; i++ {
-				bucket, err := harness.CreateBucket(100, 10, fmt.Sprintf("bench-multi-%d-%d", dimCount, i))
+				bucket, err := provider.CreateBucket(100, 10, fmt.Sprintf("bench-multi-%d-%d", dimCount, i))
 				if err != nil {
 					b.Fatalf("Failed to create bucket %d: %v", i, err)
 				}
@@ -141,15 +142,15 @@ func BenchmarkLockComparison(b *testing.B) {
 	
 	for _, scenario := range scenarios {
 		b.Run(scenario.name, func(b *testing.B) {
-			harness := BenchmarkSetup(b)
+			provider := storage.BenchmarkSetup(b)
 			
 			var bucket *tokenbucket.Bucket
 			var err error
 			
 			if scenario.withLock {
-				bucket, err = harness.CreateBucket(500, 50, fmt.Sprintf("bench-lock-comp-%s", scenario.name))
+				bucket, err = provider.CreateBucket(500, 50, fmt.Sprintf("bench-lock-comp-%s", scenario.name))
 			} else {
-				bucket, err = harness.CreateBucket(500, 50, fmt.Sprintf("bench-lock-comp-%s", scenario.name), tokenbucket.WithoutLock())
+				bucket, err = provider.CreateBucket(500, 50, fmt.Sprintf("bench-lock-comp-%s", scenario.name), tokenbucket.WithoutLock())
 			}
 			
 			if err != nil {
@@ -171,10 +172,10 @@ func BenchmarkLockComparison(b *testing.B) {
 
 // BenchmarkWithMetrics demonstrates how to collect detailed metrics during benchmarks
 func BenchmarkWithMetrics(b *testing.B) {
-	harness := BenchmarkSetup(b)
+	provider := storage.BenchmarkSetup(b)
 	metrics := NewMetrics()
 	
-	bucket, err := harness.CreateBucket(1000, 100, "bench-with-metrics")
+	bucket, err := provider.CreateBucket(1000, 100, "bench-with-metrics")
 	if err != nil {
 		b.Fatalf("Failed to create bucket: %v", err)
 	}
@@ -232,10 +233,10 @@ func BenchmarkWithMetrics(b *testing.B) {
 
 // BenchmarkRateLimitedScenario simulates a realistic rate-limited scenario
 func BenchmarkRateLimitedScenario(b *testing.B) {
-	harness := BenchmarkSetup(b)
+	provider := storage.BenchmarkSetup(b)
 	
 	// Small bucket that will frequently exhaust tokens
-	bucket, err := harness.CreateBucket(10, 5, "bench-rate-limited")
+	bucket, err := provider.CreateBucket(10, 5, "bench-rate-limited")
 	if err != nil {
 		b.Fatalf("Failed to create bucket: %v", err)
 	}
