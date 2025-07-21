@@ -35,9 +35,9 @@ type Bucket struct {
 }
 
 type options struct {
-	clock       limiters.Clock
-	logger      limiters.Logger
-	disableLock bool
+	clock  limiters.Clock
+	logger limiters.Logger
+	lock   limiters.DistLocker
 }
 
 type Option func(*options)
@@ -56,7 +56,7 @@ func WithLogger(l limiters.Logger) Option {
 
 func WithoutLock() Option {
 	return func(o *options) {
-		o.disableLock = true
+		o.lock = limiters.NewLockNoop()
 	}
 }
 
@@ -75,7 +75,9 @@ func NewBucket(capacity, fillRate int64, dimension string, cfg *dynamodb.BucketB
 	}
 
 	var lock limiters.DistLocker
-	if !opt.disableLock {
+	if opt.lock != nil {
+		lock = opt.lock
+	} else {
 		lockID := fmt.Sprintf("%s%s", lockIDPrefix, dimension)
 		lock = cfg.NewLock(lockID)
 	}

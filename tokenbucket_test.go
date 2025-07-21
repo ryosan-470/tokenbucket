@@ -2,6 +2,7 @@ package tokenbucket_test
 
 import (
 	"context"
+	"net/http"
 	"testing"
 	"time"
 
@@ -41,7 +42,11 @@ var _ limiters.Clock = (*MockClock)(nil)
 func setupDynamoDBLocal(t *testing.T) (*dynamodb.Client, func()) {
 	ctx := context.Background()
 
-	waitStrategy := wait.ForExposedPort().
+	waitStrategy := wait.ForHTTP("/").
+		WithPort("8000/tcp").
+		WithStatusCodeMatcher(func(status int) bool {
+			return status == http.StatusBadRequest
+		}).
 		WithStartupTimeout(2 * time.Minute).
 		WithPollInterval(1 * time.Second)
 
