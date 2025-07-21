@@ -178,13 +178,13 @@ func (h *AWSProvider) createLockTableIfNotExists(ctx context.Context) error {
 		TableName: aws.String(h.lockTableName),
 		AttributeDefinitions: []types.AttributeDefinition{
 			{
-				AttributeName: aws.String("LockID"),
+				AttributeName: aws.String(dynamodbstorage.AttributeNameLockID),
 				AttributeType: types.ScalarAttributeTypeS,
 			},
 		},
 		KeySchema: []types.KeySchemaElement{
 			{
-				AttributeName: aws.String("LockID"),
+				AttributeName: aws.String(dynamodbstorage.AttributeNameLockID),
 				KeyType:       types.KeyTypeHash,
 			},
 		},
@@ -206,7 +206,7 @@ func (h *AWSProvider) createLockTableIfNotExists(ctx context.Context) error {
 	_, err = h.client.UpdateTimeToLive(ctx, &dynamodb.UpdateTimeToLiveInput{
 		TableName: aws.String(h.lockTableName),
 		TimeToLiveSpecification: &types.TimeToLiveSpecification{
-			AttributeName: aws.String("TTL"),
+			AttributeName: aws.String(dynamodbstorage.AttributeNameTTL),
 			Enabled:       aws.Bool(true),
 		},
 	})

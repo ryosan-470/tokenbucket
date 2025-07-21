@@ -51,7 +51,7 @@ func (b *BucketBackendConfig) NewLock(lockID string) *Lock {
 		b.lockTableName,
 		lockID,
 		b.lockTTL,
-		b.lockMaxTries,
-		b.lockMaxTime,
+		WithBackoffMaxTries(b.lockMaxTries),
+		WithBackoffMaxTime(b.lockMaxTime),
 	)
 }
