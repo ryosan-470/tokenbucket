@@ -119,7 +119,9 @@ func TestLock_BasicLockUnlock(t *testing.T) {
 	tableName := "test-lock-table"
 	createLockTable(t, client, tableName)
 
-	lock := NewLock(client, tableName, "test-lock", 30*time.Second, 3, 5*time.Second)
+	lock := NewLock(client, tableName, "test-lock", 30*time.Second,
+		WithBackoffMaxTries(3),
+		WithBackoffMaxTime(5*time.Second))
 
 	ctx := context.Background()
 
@@ -143,8 +145,12 @@ func TestLock_ConcurrentLock(t *testing.T) {
 	tableName := "test-lock-table"
 	createLockTable(t, client, tableName)
 
-	lock1 := NewLock(client, tableName, "test-lock", 30*time.Second, 1, 1*time.Second)
-	lock2 := NewLock(client, tableName, "test-lock", 30*time.Second, 1, 1*time.Second)
+	lock1 := NewLock(client, tableName, "test-lock", 30*time.Second,
+		WithBackoffMaxTries(1),
+		WithBackoffMaxTime(1*time.Second))
+	lock2 := NewLock(client, tableName, "test-lock", 30*time.Second,
+		WithBackoffMaxTries(1),
+		WithBackoffMaxTime(1*time.Second))
 
 	ctx := context.Background()
 
@@ -191,7 +197,9 @@ func TestLock_TTLExpiration(t *testing.T) {
 	createLockTable(t, client, tableName)
 
 	// Create lock with very short TTL
-	lock := NewLock(client, tableName, "test-lock", 1*time.Second, 3, 5*time.Second)
+	lock := NewLock(client, tableName, "test-lock", 1*time.Second,
+		WithBackoffMaxTries(3),
+		WithBackoffMaxTime(5*time.Second))
 
 	ctx := context.Background()
 
@@ -205,7 +213,9 @@ func TestLock_TTLExpiration(t *testing.T) {
 	time.Sleep(3 * time.Second)
 
 	// Create a new lock instance with the same ID
-	newLock := NewLock(client, tableName, "test-lock", 30*time.Second, 3, 5*time.Second)
+	newLock := NewLock(client, tableName, "test-lock", 30*time.Second,
+		WithBackoffMaxTries(3),
+		WithBackoffMaxTime(5*time.Second))
 
 	// Should be able to acquire lock after TTL expiration
 	err = newLock.Lock(ctx)
@@ -227,7 +237,9 @@ func TestLock_UnlockNonExistentLock(t *testing.T) {
 	tableName := "test-lock-table"
 	createLockTable(t, client, tableName)
 
-	lock := NewLock(client, tableName, "non-existent-lock", 30*time.Second, 3, 5*time.Second)
+	lock := NewLock(client, tableName, "non-existent-lock", 30*time.Second,
+		WithBackoffMaxTries(3),
+		WithBackoffMaxTime(5*time.Second))
 
 	ctx := context.Background()
 
@@ -246,8 +258,12 @@ func TestLock_UnlockWrongOwner(t *testing.T) {
 	tableName := "test-lock-table"
 	createLockTable(t, client, tableName)
 
-	lock1 := NewLock(client, tableName, "test-lock", 30*time.Second, 3, 5*time.Second)
-	lock2 := NewLock(client, tableName, "test-lock", 30*time.Second, 3, 5*time.Second)
+	lock1 := NewLock(client, tableName, "test-lock", 30*time.Second,
+		WithBackoffMaxTries(3),
+		WithBackoffMaxTime(5*time.Second))
+	lock2 := NewLock(client, tableName, "test-lock", 30*time.Second,
+		WithBackoffMaxTries(3),
+		WithBackoffMaxTime(5*time.Second))
 
 	ctx := context.Background()
 

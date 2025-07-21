@@ -26,15 +26,43 @@ type Lock struct {
 	backoffMaxTime  time.Duration
 }
 
+type lockOptions struct {
+	backoffMaxTries uint
+	backoffMaxTime  time.Duration
+}
+
+type LockOption func(*lockOptions)
+
+func WithBackoffMaxTries(maxTries uint) LockOption {
+	return func(o *lockOptions) {
+		o.backoffMaxTries = maxTries
+	}
+}
+
+func WithBackoffMaxTime(maxTime time.Duration) LockOption {
+	return func(o *lockOptions) {
+		o.backoffMaxTime = maxTime
+	}
+}
+
 // NewLock creates a new instance of Lock for distributed locking using DynamoDB.
-func NewLock(client *dynamodb.Client, tableName, lockID string, ttl time.Duration, maxTries uint, maxTime time.Duration) *Lock {
+func NewLock(client *dynamodb.Client, tableName, lockID string, ttl time.Duration, opts ...LockOption) *Lock {
+	opt := &lockOptions{
+		backoffMaxTries: 5,
+		backoffMaxTime:  900 * time.Millisecond,
+	}
+
+	for _, o := range opts {
+		o(opt)
+	}
+
 	return &Lock{
 		client:          client,
 		tableName:       tableName,
 		lockID:          lockID,
 		ttl:             ttl,
-		backoffMaxTries: maxTries,
-		backoffMaxTime:  maxTime,
+		backoffMaxTries: opt.backoffMaxTries,
+		backoffMaxTime:  opt.backoffMaxTime,
 	}
 }
 
