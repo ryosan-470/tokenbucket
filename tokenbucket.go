@@ -10,6 +10,10 @@ import (
 	"github.com/ryosan-470/tokenbucket/storage/dynamodb"
 )
 
+const (
+	lockIDPrefix = "bucket_lock_"
+)
+
 type TokenBucket interface {
 	// Take attempts to take a token from the bucket. If successful, it returns nil.
 	Take(ctx context.Context) error
@@ -27,25 +31,62 @@ type Bucket struct {
 
 	backend *limiters.TokenBucketDynamoDB // Backend of the token bucket
 	bucket  *limiters.TokenBucket         // Underlying token bucket implementation
-	lock    *dynamodb.Lock                // DynamoDB lock for distributed coordination
+	lock    limiters.DistLocker           // DynamoDB lock for distributed coordination
 }
 
-func NewBucket(capacity, fillRate int64, dimension string, cfg *dynamodb.BucketBackendConfig, clock limiters.Clock, logger limiters.Logger) (*Bucket, error) {
+type options struct {
+	clock       limiters.Clock
+	logger      limiters.Logger
+	disableLock bool
+}
+
+type Option func(*options)
+
+func WithClock(c limiters.Clock) Option {
+	return func(o *options) {
+		o.clock = c
+	}
+}
+
+func WithLogger(l limiters.Logger) Option {
+	return func(o *options) {
+		o.logger = l
+	}
+}
+
+func WithoutLock() Option {
+	return func(o *options) {
+		o.disableLock = true
+	}
+}
+
+func NewBucket(capacity, fillRate int64, dimension string, cfg *dynamodb.BucketBackendConfig, opts ...Option) (*Bucket, error) {
+	opt := &options{
+		clock:  limiters.NewSystemClock(),
+		logger: &limiters.StdLogger{},
+	}
+	for _, o := range opts {
+		o(opt)
+	}
+
 	backend, err := cfg.NewTokenBucketDynamoDB(context.Background())
 	if err != nil {
 		return nil, ErrInitializedBucketFailed
 	}
 
-	lockID := fmt.Sprintf("bucket_lock_%s", dimension)
-	lock := cfg.NewLock(lockID)
+	var lock limiters.DistLocker
+	if !opt.disableLock {
+		lockID := fmt.Sprintf("%s%s", lockIDPrefix, dimension)
+		lock = cfg.NewLock(lockID)
+	}
 
 	bucket := limiters.NewTokenBucket(
 		capacity,
 		calculateFillRate(fillRate),
 		lock,
 		backend,
-		limiters.NewSystemClock(), // TODO: change to custom clock if needed
-		logger,
+		opt.clock,
+		opt.logger,
 	)
 
 	return &Bucket{
