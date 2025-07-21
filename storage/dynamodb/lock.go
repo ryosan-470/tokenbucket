@@ -42,9 +42,9 @@ const (
 	conditionExpressionForPutItem    = "attribute_not_exists(LockID) OR (#ttl < :current_time)"
 	conditionExpressionForDeleteItem = "attribute_exists(LockID) AND OwnerID = :owner_id"
 
-	attributeNameLockID  = "LockID"
-	attributeNameOwnerID = "OwnerID"
-	attributeNameTTL     = "TTL"
+	AttributeNameLockID  = "LockID"
+	AttributeNameOwnerID = "OwnerID"
+	AttributeNameTTL     = "_TTL"
 
 	expressionAttributeNameOwnerID     = ":owner_id"
 	expressionAttributeNameCurrentTime = ":current_time"
@@ -62,13 +62,13 @@ func (l *Lock) Lock(ctx context.Context) error {
 	input := &dynamodb.PutItemInput{
 		TableName: aws.String(l.tableName),
 		Item: map[string]types.AttributeValue{
-			attributeNameLockID:  &types.AttributeValueMemberS{Value: l.lockID},
-			attributeNameOwnerID: &types.AttributeValueMemberS{Value: l.ownerID},
-			attributeNameTTL:     &types.AttributeValueMemberN{Value: fmt.Sprintf("%d", ttl)},
+			AttributeNameLockID:  &types.AttributeValueMemberS{Value: l.lockID},
+			AttributeNameOwnerID: &types.AttributeValueMemberS{Value: l.ownerID},
+			AttributeNameTTL:     &types.AttributeValueMemberN{Value: fmt.Sprintf("%d", ttl)},
 		},
 		ConditionExpression: aws.String(conditionExpressionForPutItem),
 		ExpressionAttributeNames: map[string]string{
-			expressionAttributeNameTTL: attributeNameTTL,
+			expressionAttributeNameTTL: AttributeNameTTL,
 		},
 		ExpressionAttributeValues: map[string]types.AttributeValue{
 			expressionAttributeNameCurrentTime: &types.AttributeValueMemberN{Value: fmt.Sprintf("%d", currentTime)},
@@ -97,7 +97,7 @@ func (l *Lock) Unlock(ctx context.Context) error {
 	input := &dynamodb.DeleteItemInput{
 		TableName: aws.String(l.tableName),
 		Key: map[string]types.AttributeValue{
-			attributeNameLockID: &types.AttributeValueMemberS{Value: l.lockID},
+			AttributeNameLockID: &types.AttributeValueMemberS{Value: l.lockID},
 		},
 		ConditionExpression: aws.String(conditionExpressionForDeleteItem),
 		ExpressionAttributeValues: map[string]types.AttributeValue{

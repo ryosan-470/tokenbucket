@@ -75,13 +75,13 @@ func createLockTable(t *testing.T, client *dynamodb.Client, tableName string) {
 		TableName: aws.String(tableName),
 		AttributeDefinitions: []types.AttributeDefinition{
 			{
-				AttributeName: aws.String(attributeNameLockID),
+				AttributeName: aws.String(AttributeNameLockID),
 				AttributeType: types.ScalarAttributeTypeS,
 			},
 		},
 		KeySchema: []types.KeySchemaElement{
 			{
-				AttributeName: aws.String(attributeNameLockID),
+				AttributeName: aws.String(AttributeNameLockID),
 				KeyType:       types.KeyTypeHash,
 			},
 		},
@@ -103,7 +103,7 @@ func createLockTable(t *testing.T, client *dynamodb.Client, tableName string) {
 	_, err = client.UpdateTimeToLive(ctx, &dynamodb.UpdateTimeToLiveInput{
 		TableName: aws.String(tableName),
 		TimeToLiveSpecification: &types.TimeToLiveSpecification{
-			AttributeName: aws.String(attributeNameTTL),
+			AttributeName: aws.String(AttributeNameTTL),
 			Enabled:       aws.Bool(true),
 		},
 	})
