@@ -7,5 +7,7 @@
     "ryosan",
     "testcontainers",
     "tokenbucket"
-  ]
+  ],
+
+  "github.copilot.chat.codeGeneration.useInstructionFiles": true
 }
