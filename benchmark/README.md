@@ -4,11 +4,13 @@ This directory contains benchmark tests for performance evaluation of the TokenB
 
 ## Structure
 
-- `harness.go` - DynamoDB Local setup and common configuration
-- `aws_harness.go` - AWS DynamoDB setup and configuration 
+- `storage/` - Backend storage configurations
+  - `storage.go` - Common storage interface
+  - `local.go` - DynamoDB Local setup via testcontainers
+  - `aws.go` - AWS DynamoDB setup and configuration
 - `metrics.go` - Metrics collection and analysis
 - `tokenbucket_test.go` - Go standard benchmark tests
-- `cmd/benchmark/main.go` - CLI for 60-second sustained load tests
+- `cmd/benchmark/main.go` - CLI for sustained load tests
 - `results/` - Benchmark results storage directory
 
 ## Backend Support
@@ -45,7 +47,7 @@ The benchmark suite supports two DynamoDB backends:
 go test -bench=. -benchtime=30s
 
 # Run specific benchmark
-go test -bench=BenchmarkSingleDimension -benchtime=60s
+go test -bench=BenchmarkSingleDimensionSequential -benchtime=60s
 
 # Run with CPU profiling
 go test -bench=. -cpuprofile=cpu.prof
@@ -53,14 +55,24 @@ go test -bench=. -cpuprofile=cpu.prof
 # Performance measurement by concurrency level
 go test -bench=BenchmarkSingleDimensionConcurrent -benchtime=60s
 
+# Multi-dimension distributed tests
+go test -bench=BenchmarkMultiDimensionDistributed -benchtime=30s
+
 # Lock vs no-lock comparison
 go test -bench=BenchmarkLockComparison -benchtime=30s
 
+# With/without lock individual tests
+go test -bench=BenchmarkSingleDimensionWithLock -benchtime=30s
+go test -bench=BenchmarkSingleDimensionWithoutLock -benchtime=30s
+
 # Benchmark with detailed metrics
 go test -bench=BenchmarkWithMetrics -benchtime=30s -v
+
+# Rate-limited scenario testing
+go test -bench=BenchmarkRateLimitedScenario -benchtime=30s
 ```
 
-### 60-Second Sustained Tests
+### Sustained Load Tests
 
 #### DynamoDB Local (Default)
 ```bash
