@@ -11,6 +11,7 @@ require (
 	github.com/cenkalti/backoff/v5 v5.0.2
 	github.com/google/uuid v1.6.0
 	github.com/mennanov/limiters v1.13.3
+	github.com/testcontainers/testcontainers-go v0.37.0
 	github.com/testcontainers/testcontainers-go/modules/dynamodb v0.37.0
 )
 
@@ -98,7 +99,6 @@ require (
 	github.com/shirou/gopsutil/v4 v4.25.1 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/stretchr/testify v1.10.0 // indirect
-	github.com/testcontainers/testcontainers-go v0.37.0 // indirect
 	github.com/thanhpk/randstr v1.0.6 // indirect
 	github.com/tklauser/go-sysconf v0.3.12 // indirect
 	github.com/tklauser/numcpus v0.6.1 // indirect
