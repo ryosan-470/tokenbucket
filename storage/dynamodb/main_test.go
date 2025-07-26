@@ -3,35 +3,25 @@ package dynamodb
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"os"
 	"testing"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/mennanov/limiters"
-	"github.com/testcontainers/testcontainers-go"
-	dynamodbcontainer "github.com/testcontainers/testcontainers-go/modules/dynamodb"
-	"github.com/testcontainers/testcontainers-go/wait"
+	"github.com/ryosan-470/tokenbucket/internal/testutils"
 )
 
-// Global test infrastructure - shared across all tests
-var (
-	testClient    *dynamodb.Client
-	testContainer testcontainers.Container
-	testCtx       = context.Background()
-)
+var backend *testutils.DynamoDBTestBackend
 
 // TestMain sets up and tears down the shared test infrastructure
 func TestMain(m *testing.M) {
-	// Setup
 	var err error
-	testClient, testContainer, err = setupSharedDynamoDBLocal()
+	backend, err = testutils.SetupDynamoDBTestBackend(context.Background())
 	if err != nil {
-		fmt.Printf("Failed to set up DynamoDB Local container: %v\n", err)
+		fmt.Printf("Failed to set up DynamoDB test backend: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -39,8 +29,8 @@ func TestMain(m *testing.M) {
 	code := m.Run()
 
 	// Cleanup
-	if testContainer != nil {
-		if err := testContainer.Terminate(testCtx); err != nil {
+	if backend.Container != nil {
+		if err := backend.Container.Terminate(backend.Ctx); err != nil {
 			fmt.Printf("Failed to terminate DynamoDB Local container: %v\n", err)
 		}
 	}
@@ -48,67 +38,23 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// setupSharedDynamoDBLocal creates a single DynamoDB Local container for all tests
-func setupSharedDynamoDBLocal() (*dynamodb.Client, testcontainers.Container, error) {
-	// Create wait strategy focusing on port availability and service readiness
-	waitStrategy := wait.ForHTTP("/").
-		WithPort("8000/tcp").
-		WithStatusCodeMatcher(func(status int) bool {
-			return status == http.StatusBadRequest
-		}).
-		WithStartupTimeout(2 * time.Minute).
-		WithPollInterval(1 * time.Second)
-
-	container, err := dynamodbcontainer.Run(testCtx, "amazon/dynamodb-local:latest",
-		testcontainers.WithWaitStrategy(waitStrategy),
-	)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to start DynamoDB Local container: %w", err)
-	}
-
-	endpoint, err := container.ConnectionString(testCtx)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to get DynamoDB Local endpoint: %w", err)
-	}
-
-	// Add http:// prefix to endpoint
-	endpointURL := "http://" + endpoint
-
-	cfg, err := config.LoadDefaultConfig(testCtx,
-		config.WithRegion("us-east-1"),
-		config.WithCredentialsProvider(aws.CredentialsProviderFunc(func(ctx context.Context) (aws.Credentials, error) {
-			return aws.Credentials{
-				AccessKeyID:     "test",
-				SecretAccessKey: "test",
-			}, nil
-		})),
-	)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to load AWS config: %w", err)
-	}
-
-	client := dynamodb.NewFromConfig(cfg, func(o *dynamodb.Options) {
-		o.BaseEndpoint = aws.String(endpointURL)
-	})
-
-	return client, container, nil
-}
-
 // TestInfrastructure provides convenient access to shared test resources
 type TestInfrastructure struct {
 	Client *dynamodb.Client
+	Ctx    context.Context
 }
 
 // GetTestInfrastructure returns the shared test infrastructure
 func GetTestInfrastructure() *TestInfrastructure {
 	return &TestInfrastructure{
-		Client: testClient,
+		Client: backend.Client,
+		Ctx:    backend.Ctx,
 	}
 }
 
 // CreateLockTable creates a DynamoDB table for lock testing
 func (ti *TestInfrastructure) CreateLockTable(t *testing.T, tableName string) {
-	_, err := ti.Client.CreateTable(testCtx, &dynamodb.CreateTableInput{
+	_, err := ti.Client.CreateTable(backend.Ctx, &dynamodb.CreateTableInput{
 		TableName: aws.String(tableName),
 		AttributeDefinitions: []types.AttributeDefinition{
 			{
@@ -130,14 +76,14 @@ func (ti *TestInfrastructure) CreateLockTable(t *testing.T, tableName string) {
 
 	// Wait for table to be active
 	waiter := dynamodb.NewTableExistsWaiter(ti.Client)
-	if err := waiter.Wait(testCtx, &dynamodb.DescribeTableInput{
+	if err := waiter.Wait(backend.Ctx, &dynamodb.DescribeTableInput{
 		TableName: aws.String(tableName),
 	}, 2*time.Minute); err != nil {
 		t.Fatalf("Failed to wait for table to be active: %v", err)
 	}
 
 	// Enable TTL on the table
-	_, err = ti.Client.UpdateTimeToLive(testCtx, &dynamodb.UpdateTimeToLiveInput{
+	_, err = ti.Client.UpdateTimeToLive(backend.Ctx, &dynamodb.UpdateTimeToLiveInput{
 		TableName: aws.String(tableName),
 		TimeToLiveSpecification: &types.TimeToLiveSpecification{
 			AttributeName: aws.String(AttributeNameTTL),
@@ -152,7 +98,7 @@ func (ti *TestInfrastructure) CreateLockTable(t *testing.T, tableName string) {
 // CreateTokenBucketTable creates a DynamoDB table for token bucket testing
 func (ti *TestInfrastructure) CreateTokenBucketTable(t *testing.T, tableName string) limiters.DynamoDBTableProperties {
 	// Create table with standard limiters schema
-	_, err := ti.Client.CreateTable(testCtx, &dynamodb.CreateTableInput{
+	_, err := ti.Client.CreateTable(backend.Ctx, &dynamodb.CreateTableInput{
 		TableName: aws.String(tableName),
 		AttributeDefinitions: []types.AttributeDefinition{
 			{
@@ -174,14 +120,14 @@ func (ti *TestInfrastructure) CreateTokenBucketTable(t *testing.T, tableName str
 
 	// Wait for table to be active
 	waiter := dynamodb.NewTableExistsWaiter(ti.Client)
-	if err := waiter.Wait(testCtx, &dynamodb.DescribeTableInput{
+	if err := waiter.Wait(backend.Ctx, &dynamodb.DescribeTableInput{
 		TableName: aws.String(tableName),
 	}, 2*time.Minute); err != nil {
 		t.Fatalf("Failed to wait for table to be active: %v", err)
 	}
 
 	// Load table properties using limiters library
-	props, err := limiters.LoadDynamoDBTableProperties(testCtx, ti.Client, tableName)
+	props, err := limiters.LoadDynamoDBTableProperties(backend.Ctx, ti.Client, tableName)
 	if err != nil {
 		t.Fatalf("Failed to load DynamoDB table properties: %v", err)
 	}
@@ -191,7 +137,7 @@ func (ti *TestInfrastructure) CreateTokenBucketTable(t *testing.T, tableName str
 
 // DeleteTable removes a table (useful for test cleanup)
 func (ti *TestInfrastructure) DeleteTable(t *testing.T, tableName string) {
-	_, err := ti.Client.DeleteTable(testCtx, &dynamodb.DeleteTableInput{
+	_, err := ti.Client.DeleteTable(backend.Ctx, &dynamodb.DeleteTableInput{
 		TableName: aws.String(tableName),
 	})
 	if err != nil {
