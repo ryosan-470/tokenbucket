@@ -110,7 +110,7 @@ func (b *Backend) SetState(ctx context.Context, state limiters.TokenBucketState)
 		return err
 	}
 	b.latestVersion++
-	return err
+	return nil
 }
 
 func (b *Backend) Reset(ctx context.Context) error {
