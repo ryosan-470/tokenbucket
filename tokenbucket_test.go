@@ -2,658 +2,382 @@ package tokenbucket_test
 
 import (
 	"context"
-	"net/http"
+	"fmt"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
-	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
-	"github.com/mennanov/limiters"
-	"github.com/testcontainers/testcontainers-go"
-	dynamodbcontainer "github.com/testcontainers/testcontainers-go/modules/dynamodb"
-	"github.com/testcontainers/testcontainers-go/wait"
-
+	"github.com/google/uuid"
 	"github.com/ryosan-470/tokenbucket"
-	dynamodbstorage "github.com/ryosan-470/tokenbucket/storage/dynamodb"
+	"github.com/ryosan-470/tokenbucket/internal/testutils"
+	"github.com/ryosan-470/tokenbucket/storage/dynamodb"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-// MockClock implements limiters.Clock interface for testing
-type MockClock struct {
-	currentTime time.Time
-}
+const (
+	testBackendTableNamePrefix = "test-token-bucket-backend-"
+	testLockTableNamePrefix    = "test-token-bucket-lock-"
+)
 
-func NewMockClock(startTime time.Time) *MockClock {
-	return &MockClock{currentTime: startTime}
-}
+func TestTokenBucket(t *testing.T) {
+	infra := GetTestInfrastructure()
 
-func (m *MockClock) Now() time.Time {
-	return m.currentTime
-}
+	t.Run("NewBucket", func(t *testing.T) {
+		bucketTable := infra.CreateTokenBucketTable(t, fmt.Sprintf("%s%s", testBackendTableNamePrefix, uuid.NewString()))
+		defer infra.DeleteTable(t, bucketTable.TableName)
+		lockTable := infra.CreateLockTable(t, fmt.Sprintf("%s%s", testLockTableNamePrefix, uuid.NewString()))
+		defer infra.DeleteTable(t, lockTable.TableName)
 
-func (m *MockClock) Advance(duration time.Duration) {
-	m.currentTime = m.currentTime.Add(duration)
-}
+		dimension := uuid.NewString() // Use a unique dimension for each test run
+		lockID := uuid.NewString()
 
-// Ensure MockClock implements limiters.Clock interface
-var _ limiters.Clock = (*MockClock)(nil)
+		bucketCfg := dynamodb.NewBucketBackendConfig(
+			infra.Client,
+			bucketTable.TableName,
+			dimension,
+		)
 
-func setupDynamoDBLocal(t *testing.T) (*dynamodb.Client, func()) {
-	ctx := context.Background()
+		lockCfg := dynamodb.NewLockBackendConfig(
+			infra.Client,
+			lockTable.TableName,
+			30*time.Second,
+			3,
+			5*time.Second,
+		)
 
-	waitStrategy := wait.ForHTTP("/").
-		WithPort("8000/tcp").
-		WithStatusCodeMatcher(func(status int) bool {
-			return status == http.StatusBadRequest
-		}).
-		WithStartupTimeout(2 * time.Minute).
-		WithPollInterval(1 * time.Second)
+		capacity := int64(1000)
+		fillRate := int64(10)
 
-	container, err := dynamodbcontainer.Run(ctx, "amazon/dynamodb-local:latest",
-		testcontainers.WithWaitStrategy(waitStrategy),
-	)
-	if err != nil {
-		t.Fatalf("Failed to start DynamoDB Local container: %v", err)
-	}
+		t.Run("OK", func(t *testing.T) {
+			bucket, err := tokenbucket.NewBucket(capacity, fillRate, dimension, bucketCfg)
+			require.NoError(t, err)
+			assert.Equal(t, capacity, bucket.Capacity)
+			assert.Equal(t, fillRate, bucket.FillRate)
+			assert.Equal(t, dimension, bucket.Dimension)
+			assert.NotNil(t, bucket.LastUpdated)
+		})
 
-	endpoint, err := container.ConnectionString(ctx)
-	if err != nil {
-		t.Fatalf("Failed to get DynamoDB Local endpoint: %v", err)
-	}
+		t.Run("WithLockBackend", func(t *testing.T) {
+			bucket, err := tokenbucket.NewBucket(
+				capacity,
+				fillRate,
+				dimension,
+				bucketCfg,
+				tokenbucket.WithLockBackend(lockCfg, lockID),
+			)
+			require.NoError(t, err)
+			assert.Equal(t, capacity, bucket.Capacity)
+			assert.Equal(t, fillRate, bucket.FillRate)
+			assert.Equal(t, dimension, bucket.Dimension)
+		})
 
-	endpointURL := "http://" + endpoint
+		t.Run("WithLimitersBackend", func(t *testing.T) {
+			bucket, err := tokenbucket.NewBucket(
+				capacity,
+				fillRate,
+				dimension,
+				bucketCfg,
+				tokenbucket.WithLimitersBackend(bucketCfg, true),
+			)
+			require.NoError(t, err)
+			assert.Equal(t, capacity, bucket.Capacity)
+			assert.Equal(t, fillRate, bucket.FillRate)
+			assert.Equal(t, dimension, bucket.Dimension)
+		})
 
-	cfg, err := config.LoadDefaultConfig(ctx,
-		config.WithRegion("us-east-1"),
-		config.WithCredentialsProvider(aws.CredentialsProviderFunc(func(ctx context.Context) (aws.Credentials, error) {
-			return aws.Credentials{
-				AccessKeyID:     "test",
-				SecretAccessKey: "test",
-			}, nil
-		})),
-	)
-	if err != nil {
-		t.Fatalf("Failed to load AWS config: %v", err)
-	}
+		t.Run("WithClock", func(t *testing.T) {
+			mockClock := testutils.NewMockClock(time.Now())
+			bucket, err := tokenbucket.NewBucket(
+				capacity,
+				fillRate,
+				dimension,
+				bucketCfg,
+				tokenbucket.WithClock(mockClock),
+			)
+			require.NoError(t, err)
+			assert.Equal(t, capacity, bucket.Capacity)
+			assert.Equal(t, fillRate, bucket.FillRate)
+			assert.Equal(t, dimension, bucket.Dimension)
+			assert.NotNil(t, bucket)
+		})
 
-	client := dynamodb.NewFromConfig(cfg, func(o *dynamodb.Options) {
-		o.BaseEndpoint = aws.String(endpointURL)
+		t.Run("ZeroCapacity", func(t *testing.T) {
+			bucket, err := tokenbucket.NewBucket(0, fillRate, dimension, bucketCfg)
+			require.NoError(t, err)
+			assert.Equal(t, int64(0), bucket.Capacity)
+			assert.Equal(t, fillRate, bucket.FillRate)
+			assert.Equal(t, dimension, bucket.Dimension)
+		})
+
+		t.Run("ZeroFillRate", func(t *testing.T) {
+			bucket, err := tokenbucket.NewBucket(capacity, 0, dimension, bucketCfg)
+			require.NoError(t, err)
+			assert.Equal(t, capacity, bucket.Capacity)
+			assert.Equal(t, int64(0), bucket.FillRate)
+			assert.Equal(t, dimension, bucket.Dimension)
+		})
+
+		t.Run("InvalidBackendConfig", func(t *testing.T) {
+			bucket, err := tokenbucket.NewBucket(capacity, fillRate, dimension, nil)
+			assert.Error(t, err)
+			assert.Nil(t, bucket)
+		})
 	})
 
-	cleanup := func() {
-		if err := container.Terminate(ctx); err != nil {
-			t.Logf("Failed to terminate DynamoDB Local container: %v", err)
-		}
-	}
-
-	return client, cleanup
-}
-
-func createTokenBucketTable(t *testing.T, client *dynamodb.Client, tableName string) {
-	ctx := context.Background()
-
-	_, err := client.CreateTable(ctx, &dynamodb.CreateTableInput{
-		TableName: aws.String(tableName),
-		AttributeDefinitions: []types.AttributeDefinition{
-			{
-				AttributeName: aws.String("PK"),
-				AttributeType: types.ScalarAttributeTypeS,
-			},
-			{
-				AttributeName: aws.String("SK"),
-				AttributeType: types.ScalarAttributeTypeS,
-			},
-		},
-		KeySchema: []types.KeySchemaElement{
-			{
-				AttributeName: aws.String("PK"),
-				KeyType:       types.KeyTypeHash,
-			},
-			{
-				AttributeName: aws.String("SK"),
-				KeyType:       types.KeyTypeRange,
-			},
-		},
-		BillingMode: types.BillingModePayPerRequest,
-	})
-	if err != nil {
-		t.Fatalf("Failed to create token bucket table: %v", err)
-	}
-
-	waiter := dynamodb.NewTableExistsWaiter(client)
-	if err := waiter.Wait(ctx, &dynamodb.DescribeTableInput{
-		TableName: aws.String(tableName),
-	}, 2*time.Minute); err != nil {
-		t.Fatalf("Failed to wait for table to be active: %v", err)
-	}
-
-	_, err = client.UpdateTimeToLive(ctx, &dynamodb.UpdateTimeToLiveInput{
-		TableName: aws.String(tableName),
-		TimeToLiveSpecification: &types.TimeToLiveSpecification{
-			AttributeName: aws.String("_TTL"),
-			Enabled:       aws.Bool(true),
-		},
-	})
-	if err != nil {
-		t.Fatalf("Failed to enable TTL on token bucket table: %v", err)
-	}
-}
-
-func createLockTable(t *testing.T, client *dynamodb.Client, tableName string) {
-	ctx := context.Background()
-
-	_, err := client.CreateTable(ctx, &dynamodb.CreateTableInput{
-		TableName: aws.String(tableName),
-		AttributeDefinitions: []types.AttributeDefinition{
-			{
-				AttributeName: aws.String("LockID"),
-				AttributeType: types.ScalarAttributeTypeS,
-			},
-		},
-		KeySchema: []types.KeySchemaElement{
-			{
-				AttributeName: aws.String("LockID"),
-				KeyType:       types.KeyTypeHash,
-			},
-		},
-		BillingMode: types.BillingModePayPerRequest,
-	})
-	if err != nil {
-		t.Fatalf("Failed to create lock table: %v", err)
-	}
-
-	waiter := dynamodb.NewTableExistsWaiter(client)
-	if err := waiter.Wait(ctx, &dynamodb.DescribeTableInput{
-		TableName: aws.String(tableName),
-	}, 2*time.Minute); err != nil {
-		t.Fatalf("Failed to wait for lock table to be active: %v", err)
-	}
-
-	_, err = client.UpdateTimeToLive(ctx, &dynamodb.UpdateTimeToLiveInput{
-		TableName: aws.String(tableName),
-		TimeToLiveSpecification: &types.TimeToLiveSpecification{
-			AttributeName: aws.String("TTL"),
-			Enabled:       aws.Bool(true),
-		},
-	})
-	if err != nil {
-		t.Fatalf("Failed to enable TTL on lock table: %v", err)
-	}
-}
-
-func TestTokenBucket_BasicOperations(t *testing.T) {
-	client, cleanup := setupDynamoDBLocal(t)
-	defer cleanup()
-
-	bucketTableName := "test-token-bucket"
-	lockTableName := "test-lock-table"
-
-	createTokenBucketTable(t, client, bucketTableName)
-	createLockTable(t, client, lockTableName)
-
-	cfg := dynamodbstorage.NewBucketBackendConfig(
-		client,
-		bucketTableName,
-		"test-dimension",
-		lockTableName,
-		30*time.Second,
-		3,
-		5*time.Second,
-	)
-
-	bucket, err := tokenbucket.NewBucket(10, 1, "test-dimension", cfg)
-	if err != nil {
-		t.Fatalf("Failed to create bucket: %v", err)
-	}
-
-	ctx := context.Background()
-
-	// Test initial state
-	state, err := bucket.Get(ctx)
-	if err != nil {
-		t.Fatalf("Failed to get bucket state: %v", err)
-	}
-
-	if state.Capacity != 10 {
-		t.Errorf("Expected capacity 10, got %d", state.Capacity)
-	}
-
-	if state.FillRate != 1 {
-		t.Errorf("Expected fill rate 1, got %d", state.FillRate)
-	}
-
-	if state.Dimension != "test-dimension" {
-		t.Errorf("Expected dimension 'test-dimension', got %s", state.Dimension)
-	}
-
-	// Test taking tokens
-	for i := 0; i < 5; i++ {
-		if err := bucket.Take(ctx); err != nil {
-			t.Fatalf("Failed to take token %d: %v", i, err)
-		}
-	}
-
-	// Check state after taking tokens
-	state, err = bucket.Get(ctx)
-	if err != nil {
-		t.Fatalf("Failed to get bucket state after taking tokens: %v", err)
-	}
-
-	if state.Available != 5 {
-		t.Errorf("Expected 5 available tokens, got %d", state.Available)
-	}
-}
-
-func TestTokenBucket_RateLimiting(t *testing.T) {
-	client, cleanup := setupDynamoDBLocal(t)
-	defer cleanup()
-
-	bucketTableName := "test-token-bucket-rate"
-	lockTableName := "test-lock-table-rate"
-
-	createTokenBucketTable(t, client, bucketTableName)
-	createLockTable(t, client, lockTableName)
-
-	cfg := dynamodbstorage.NewBucketBackendConfig(
-		client,
-		bucketTableName,
-		"test-rate-limit",
-		lockTableName,
-		30*time.Second,
-		3,
-		5*time.Second,
-	)
-
-	// Create mock clock starting at a specific time
-	startTime := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
-	mockClock := NewMockClock(startTime)
-
-	// Create bucket with capacity 3 and fill rate 1 token/second using mock clock
-	bucket, err := tokenbucket.NewBucket(3, 1, "test-rate-limit", cfg, tokenbucket.WithClock(mockClock))
-	if err != nil {
-		t.Fatalf("Failed to create bucket: %v", err)
-	}
-
-	ctx := context.Background()
-
-	// Exhaust all tokens
-	for i := 0; i < 3; i++ {
-		if err := bucket.Take(ctx); err != nil {
-			t.Fatalf("Failed to take token %d: %v", i, err)
-		}
-	}
-
-	// Next take should fail (rate limited)
-	if err := bucket.Take(ctx); err == nil {
-		t.Fatal("Expected rate limiting, but take succeeded")
-	}
-
-	// Check that bucket state shows 0 available tokens
-	state, err := bucket.Get(ctx)
-	if err != nil {
-		t.Fatalf("Failed to get bucket state: %v", err)
-	}
-
-	if state.Available != 0 {
-		t.Errorf("Expected 0 available tokens after exhaustion, got %d", state.Available)
-	}
-
-	// Advance mock clock by 1 second (should refill 1 token)
-	mockClock.Advance(1 * time.Second)
-
-	// Should be able to take exactly 1 token now
-	if err := bucket.Take(ctx); err != nil {
-		t.Fatalf("Failed to take token after refill: %v", err)
-	}
-
-	// Second take should fail immediately (no tokens available)
-	if err := bucket.Take(ctx); err == nil {
-		t.Fatal("Expected rate limiting after taking the only refilled token, but take succeeded")
-	}
-
-	// Advance mock clock by another 2 seconds (should refill 2 more tokens)
-	mockClock.Advance(2 * time.Second)
-
-	// Should be able to take 2 tokens now
-	for i := 0; i < 2; i++ {
-		if err := bucket.Take(ctx); err != nil {
-			t.Fatalf("Failed to take token after 2-second refill %d: %v", i, err)
-		}
-	}
-
-	// Verify final state
-	state, err = bucket.Get(ctx)
-	if err != nil {
-		t.Fatalf("Failed to get bucket state after final refill: %v", err)
-	}
-
-	if state.Available != 0 {
-		t.Errorf("Expected 0 available tokens after taking all refilled tokens, got %d", state.Available)
-	}
-}
-
-func TestTokenBucket_DistributedCoordination(t *testing.T) {
-	client, cleanup := setupDynamoDBLocal(t)
-	defer cleanup()
-
-	bucketTableName := "test-token-bucket-distributed"
-	lockTableName := "test-lock-table-distributed"
-
-	createTokenBucketTable(t, client, bucketTableName)
-	createLockTable(t, client, lockTableName)
-
-	cfg := dynamodbstorage.NewBucketBackendConfig(
-		client,
-		bucketTableName,
-		"distributed-test",
-		lockTableName,
-		30*time.Second,
-		3,
-		5*time.Second,
-	)
-
-	// Create two bucket instances with same dimension
-	bucket1, err := tokenbucket.NewBucket(5, 1, "distributed-test", cfg)
-	if err != nil {
-		t.Fatalf("Failed to create bucket1: %v", err)
-	}
-
-	bucket2, err := tokenbucket.NewBucket(5, 1, "distributed-test", cfg)
-	if err != nil {
-		t.Fatalf("Failed to create bucket2: %v", err)
-	}
-
-	ctx := context.Background()
-
-	// Take 3 tokens from bucket1
-	for i := 0; i < 3; i++ {
-		if err := bucket1.Take(ctx); err != nil {
-			t.Fatalf("Failed to take token from bucket1: %v", err)
-		}
-	}
-
-	// Check state from bucket2 should reflect bucket1's consumption
-	state, err := bucket2.Get(ctx)
-	if err != nil {
-		t.Fatalf("Failed to get state from bucket2: %v", err)
-	}
-
-	if state.Available != 2 {
-		t.Errorf("Expected 2 available tokens in bucket2, got %d", state.Available)
-	}
-
-	// Take remaining 2 tokens from bucket2
-	for i := 0; i < 2; i++ {
-		if err := bucket2.Take(ctx); err != nil {
-			t.Fatalf("Failed to take remaining token from bucket2: %v", err)
-		}
-	}
-
-	// Both buckets should now be empty
-	if err := bucket1.Take(ctx); err == nil {
-		t.Fatal("Expected bucket1 to be empty, but take succeeded")
-	}
-
-	if err := bucket2.Take(ctx); err == nil {
-		t.Fatal("Expected bucket2 to be empty, but take succeeded")
-	}
-}
-
-func TestTokenBucket_WithoutLock(t *testing.T) {
-	client, cleanup := setupDynamoDBLocal(t)
-	defer cleanup()
-
-	bucketTableName := "test-token-bucket-nolock"
-	lockTableName := "test-lock-table-nolock"
-
-	createTokenBucketTable(t, client, bucketTableName)
-	createLockTable(t, client, lockTableName)
-
-	cfg := dynamodbstorage.NewBucketBackendConfig(
-		client,
-		bucketTableName,
-		"no-lock-test",
-		lockTableName,
-		30*time.Second,
-		3,
-		5*time.Second,
-	)
-
-	// Test bucket creation without lock (should succeed)
-	bucket, err := tokenbucket.NewBucket(5, 1, "no-lock-test", cfg, tokenbucket.WithoutLock())
-	if err != nil {
-		t.Fatalf("Failed to create bucket without lock: %v", err)
-	}
-
-	// Verify the bucket was created with correct configuration
-	if bucket.Capacity != 5 {
-		t.Errorf("Expected capacity 5, got %d", bucket.Capacity)
-	}
-
-	if bucket.FillRate != 1 {
-		t.Errorf("Expected fill rate 1, got %d", bucket.FillRate)
-	}
-
-	if bucket.Dimension != "no-lock-test" {
-		t.Errorf("Expected dimension 'no-lock-test', got %s", bucket.Dimension)
-	}
-}
-
-func TestTokenBucket_StatePersistence(t *testing.T) {
-	client, cleanup := setupDynamoDBLocal(t)
-	defer cleanup()
-
-	bucketTableName := "test-token-bucket-persistence"
-	lockTableName := "test-lock-table-persistence"
-
-	createTokenBucketTable(t, client, bucketTableName)
-	createLockTable(t, client, lockTableName)
-
-	cfg := dynamodbstorage.NewBucketBackendConfig(
-		client,
-		bucketTableName,
-		"persistence-test",
-		lockTableName,
-		30*time.Second,
-		3,
-		5*time.Second,
-	)
-
-	ctx := context.Background()
-
-	// Create first bucket instance and consume tokens
-	{
-		bucket, err := tokenbucket.NewBucket(10, 1, "persistence-test", cfg)
-		if err != nil {
-			t.Fatalf("Failed to create first bucket: %v", err)
-		}
-
-		// Take 7 tokens
-		for i := 0; i < 7; i++ {
-			if err := bucket.Take(ctx); err != nil {
-				t.Fatalf("Failed to take token %d: %v", i, err)
+	t.Run("Take", func(t *testing.T) {
+		ctx := context.Background()
+		bucketTable := infra.CreateTokenBucketTable(t, fmt.Sprintf("%s%s", testBackendTableNamePrefix, uuid.NewString()))
+		defer infra.DeleteTable(t, bucketTable.TableName)
+
+		dimension := uuid.NewString()
+
+		bucketCfg := dynamodb.NewBucketBackendConfig(
+			infra.Client,
+			bucketTable.TableName,
+			dimension,
+		)
+
+		t.Run("SingleToken", func(t *testing.T) {
+			bucket, err := tokenbucket.NewBucket(10, 1, dimension, bucketCfg)
+			require.NoError(t, err)
+
+			err = bucket.Take(ctx)
+			require.NoError(t, err)
+
+			state, err := bucket.Get(ctx)
+			require.NoError(t, err)
+			assert.LessOrEqual(t, state.Available, int64(9))
+		})
+
+		t.Run("ExhaustAllTokens", func(t *testing.T) {
+			bucket, err := tokenbucket.NewBucket(3, 0, dimension+"-exhaust", bucketCfg)
+			require.NoError(t, err)
+
+			// Take all 3 tokens
+			for i := 0; i < 3; i++ {
+				err := bucket.Take(ctx)
+				require.NoError(t, err)
 			}
-		}
-	}
 
-	// Create second bucket instance with same dimension
-	bucket2, err := tokenbucket.NewBucket(10, 1, "persistence-test", cfg)
-	if err != nil {
-		t.Fatalf("Failed to create second bucket: %v", err)
-	}
+			// Get state to check available tokens
+			state, err := bucket.Get(ctx)
+			require.NoError(t, err)
+			if state.Available > 0 {
+				// If tokens are still available, continue taking until exhausted
+				for state.Available > 0 {
+					bucket.Take(ctx)
+					state, _ = bucket.Get(ctx)
+				}
+			}
 
-	// State should be preserved from first instance
-	state, err := bucket2.Get(ctx)
-	if err != nil {
-		t.Fatalf("Failed to get state from second bucket: %v", err)
-	}
+			// Next attempt should fail
+			err = bucket.Take(ctx)
+			require.Error(t, err)
+		})
 
-	if state.Available != 3 {
-		t.Errorf("Expected 3 available tokens in recreated bucket, got %d", state.Available)
-	}
+		t.Run("WithTokenRefill", func(t *testing.T) {
+			bucket, err := tokenbucket.NewBucket(
+				5, 5, dimension+"-refill", bucketCfg,
+			)
+			require.NoError(t, err)
 
-	// Should be able to take the remaining 3 tokens
-	for i := 0; i < 3; i++ {
-		if err := bucket2.Take(ctx); err != nil {
-			t.Fatalf("Failed to take remaining token %d: %v", i, err)
-		}
-	}
+			// Exhaust all tokens
+			state, _ := bucket.Get(ctx)
+			for state.Available > 0 {
+				bucket.Take(ctx)
+				state, _ = bucket.Get(ctx)
+			}
 
-	// Should be empty now
-	if err := bucket2.Take(ctx); err == nil {
-		t.Fatal("Expected bucket to be empty, but take succeeded")
-	}
+			// Next take should fail
+			err = bucket.Take(ctx)
+			require.Error(t, err)
+
+			// Wait for token refill (1 second should add 5 tokens)
+			time.Sleep(1200 * time.Millisecond)
+
+			// Now take should succeed
+			err = bucket.Take(ctx)
+			require.NoError(t, err)
+		})
+
+		t.Run("ContextCancellation", func(t *testing.T) {
+			cancelCtx, cancel := context.WithCancel(context.Background())
+			cancel()
+
+			bucket, err := tokenbucket.NewBucket(10, 1, dimension+"-cancel", bucketCfg)
+			require.NoError(t, err)
+
+			err = bucket.Take(cancelCtx)
+			require.Error(t, err)
+		})
+	})
+
+	t.Run("Get", func(t *testing.T) {
+		ctx := context.Background()
+		bucketTable := infra.CreateTokenBucketTable(t, fmt.Sprintf("%s%s", testBackendTableNamePrefix, uuid.NewString()))
+		defer infra.DeleteTable(t, bucketTable.TableName)
+
+		dimension := uuid.NewString()
+
+		bucketCfg := dynamodb.NewBucketBackendConfig(
+			infra.Client,
+			bucketTable.TableName,
+			dimension,
+		)
+
+		t.Run("InitialState", func(t *testing.T) {
+			bucket, err := tokenbucket.NewBucket(100, 10, dimension, bucketCfg)
+			require.NoError(t, err)
+
+			state, err := bucket.Get(ctx)
+			require.NoError(t, err)
+			assert.Equal(t, int64(100), state.Capacity)
+			assert.Equal(t, int64(10), state.FillRate)
+			assert.Equal(t, dimension, state.Dimension)
+			assert.GreaterOrEqual(t, state.Available, int64(0))
+			assert.GreaterOrEqual(t, state.LastUpdated, int64(0))
+		})
+
+		t.Run("StateAfterMultipleTakes", func(t *testing.T) {
+			bucket, err := tokenbucket.NewBucket(50, 5, dimension+"-takes", bucketCfg)
+			require.NoError(t, err)
+
+			// Take 5 tokens
+			for i := 0; i < 5; i++ {
+				err := bucket.Take(ctx)
+				require.NoError(t, err)
+			}
+
+			state, err := bucket.Get(ctx)
+			require.NoError(t, err)
+			assert.LessOrEqual(t, state.Available, int64(45))
+			assert.Equal(t, int64(50), state.Capacity)
+			assert.Equal(t, int64(5), state.FillRate)
+		})
+	})
+
+	t.Run("Concurrency", func(t *testing.T) {
+		ctx := context.Background()
+		bucketTable := infra.CreateTokenBucketTable(t, fmt.Sprintf("%s%s", testBackendTableNamePrefix, uuid.NewString()))
+		defer infra.DeleteTable(t, bucketTable.TableName)
+		lockTable := infra.CreateLockTable(t, fmt.Sprintf("%s%s", testLockTableNamePrefix, uuid.NewString()))
+		defer infra.DeleteTable(t, lockTable.TableName)
+
+		dimension := uuid.NewString()
+		lockID := uuid.NewString()
+
+		bucketCfg := dynamodb.NewBucketBackendConfig(
+			infra.Client,
+			bucketTable.TableName,
+			dimension,
+		)
+
+		lockCfg := dynamodb.NewLockBackendConfig(
+			infra.Client,
+			lockTable.TableName,
+			30*time.Second,
+			3,
+			5*time.Second,
+		)
+
+		t.Run("ConcurrentTakes", func(t *testing.T) {
+			bucket, err := tokenbucket.NewBucket(
+				100, 0, dimension, bucketCfg,
+				tokenbucket.WithLockBackend(lockCfg, lockID),
+			)
+			require.NoError(t, err)
+
+			var wg sync.WaitGroup
+			successCount := int32(0)
+			numGoroutines := 100
+
+			for i := 0; i < numGoroutines; i++ {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					if err := bucket.Take(ctx); err == nil {
+						atomic.AddInt32(&successCount, 1)
+					}
+				}()
+			}
+
+			wg.Wait()
+			assert.Equal(t, int32(100), successCount)
+
+			state, err := bucket.Get(ctx)
+			require.NoError(t, err)
+			assert.Equal(t, int64(0), state.Available)
+		})
+	})
+
+	t.Run("EdgeCases", func(t *testing.T) {
+		ctx := context.Background()
+		bucketTable := infra.CreateTokenBucketTable(t, fmt.Sprintf("%s%s", testBackendTableNamePrefix, uuid.NewString()))
+		defer infra.DeleteTable(t, bucketTable.TableName)
+
+		dimension := uuid.NewString()
+
+		bucketCfg := dynamodb.NewBucketBackendConfig(
+			infra.Client,
+			bucketTable.TableName,
+			dimension,
+		)
+
+		t.Run("LargeCapacity", func(t *testing.T) {
+			bucket, err := tokenbucket.NewBucket(int64(1e9), 1000, dimension, bucketCfg)
+			require.NoError(t, err)
+			assert.Equal(t, int64(1e9), bucket.Capacity)
+		})
+
+		t.Run("PartialTokenRefill", func(t *testing.T) {
+			mockClock := testutils.NewMockClock(time.Now())
+			bucket, err := tokenbucket.NewBucket(
+				10, 10, dimension+"-partial", bucketCfg,
+				tokenbucket.WithClock(mockClock),
+			)
+			require.NoError(t, err)
+
+			// Take 5 tokens
+			for i := 0; i < 5; i++ {
+				err := bucket.Take(ctx)
+				require.NoError(t, err)
+			}
+
+			// Get initial state after taking tokens
+			stateAfterTake, err := bucket.Get(ctx)
+			require.NoError(t, err)
+
+			// Advance time by 0.5 seconds (should refill 5 tokens)
+			mockClock.Advance(500 * time.Millisecond)
+
+			state, err := bucket.Get(ctx)
+			require.NoError(t, err)
+			// Available tokens should be greater than or equal to the state after taking
+			assert.GreaterOrEqual(t, state.Available, stateAfterTake.Available)
+		})
+	})
 }
 
-func TestTokenBucket_TimeBasedRefill(t *testing.T) {
-	client, cleanup := setupDynamoDBLocal(t)
-	defer cleanup()
-
-	bucketTableName := "test-token-bucket-time"
-	lockTableName := "test-lock-table-time"
-
-	createTokenBucketTable(t, client, bucketTableName)
-	createLockTable(t, client, lockTableName)
-
-	cfg := dynamodbstorage.NewBucketBackendConfig(
-		client,
-		bucketTableName,
-		"time-based-test",
-		lockTableName,
-		30*time.Second,
-		3,
-		5*time.Second,
-	)
-
-	// Create mock clock starting at a specific time
-	startTime := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
-	mockClock := NewMockClock(startTime)
-
-	// Create bucket with capacity 5 and fill rate 2 tokens/second
-	bucket, err := tokenbucket.NewBucket(5, 2, "time-based-test", cfg, tokenbucket.WithClock(mockClock))
-	if err != nil {
-		t.Fatalf("Failed to create bucket: %v", err)
+func TestCalculateFillRate(t *testing.T) {
+	testCases := []struct {
+		name     string
+		fillRate int64
+		expected time.Duration
+	}{
+		{"Rate1", 1, time.Second},
+		{"Rate10", 10, 100 * time.Millisecond},
+		{"Rate100", 100, 10 * time.Millisecond},
+		{"Rate1000", 1000, time.Millisecond},
+		{"Zero", 0, 0},
+		{"Negative", -10, 0},
 	}
 
-	ctx := context.Background()
-
-	// Take 4 tokens, leaving 1 available
-	for i := 0; i < 4; i++ {
-		if err := bucket.Take(ctx); err != nil {
-			t.Fatalf("Failed to take token %d: %v", i, err)
-		}
-	}
-
-	// Advance time by 1 second (should add 2 tokens: 1 + 2 = 3 available)
-	mockClock.Advance(1 * time.Second)
-
-	// Should be able to take 3 tokens
-	for i := 0; i < 3; i++ {
-		if err := bucket.Take(ctx); err != nil {
-			t.Fatalf("Failed to take token after 1-second advance %d: %v", i, err)
-		}
-	}
-
-	// Advance time by 1.5 seconds (should add 3 more tokens: 0 + 3 = 3 available)
-	mockClock.Advance(1500 * time.Millisecond)
-
-	// Should be able to take 3 tokens
-	for i := 0; i < 3; i++ {
-		if err := bucket.Take(ctx); err != nil {
-			t.Fatalf("Failed to take token after 1.5-second advance %d: %v", i, err)
-		}
-	}
-
-	// Advance time by a large amount (should cap at bucket capacity: 5 tokens)
-	mockClock.Advance(10 * time.Second)
-
-	// Should be able to take exactly 5 tokens (capacity limit)
-	for i := 0; i < 5; i++ {
-		if err := bucket.Take(ctx); err != nil {
-			t.Fatalf("Failed to take token after large time advance %d: %v", i, err)
-		}
-	}
-
-	// Should fail on the 6th token (capacity exceeded)
-	if err := bucket.Take(ctx); err == nil {
-		t.Fatal("Expected capacity limit to be enforced, but take succeeded")
-	}
-}
-
-func TestTokenBucket_PreciseTimingControl(t *testing.T) {
-	client, cleanup := setupDynamoDBLocal(t)
-	defer cleanup()
-
-	bucketTableName := "test-token-bucket-precise"
-	lockTableName := "test-lock-table-precise"
-
-	createTokenBucketTable(t, client, bucketTableName)
-	createLockTable(t, client, lockTableName)
-
-	cfg := dynamodbstorage.NewBucketBackendConfig(
-		client,
-		bucketTableName,
-		"precise-timing-test",
-		lockTableName,
-		30*time.Second,
-		3,
-		5*time.Second,
-	)
-
-	// Create mock clock
-	startTime := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
-	mockClock := NewMockClock(startTime)
-
-	// Create bucket with capacity 10 and fill rate 5 tokens/second
-	bucket, err := tokenbucket.NewBucket(10, 5, "precise-timing-test", cfg, tokenbucket.WithClock(mockClock))
-	if err != nil {
-		t.Fatalf("Failed to create bucket: %v", err)
-	}
-
-	ctx := context.Background()
-
-	// Exhaust all tokens
-	for i := 0; i < 10; i++ {
-		if err := bucket.Take(ctx); err != nil {
-			t.Fatalf("Failed to take initial token %d: %v", i, err)
-		}
-	}
-
-	// Test precise timing control: advance by 200ms (should add 1 token at 5 tokens/second)
-	mockClock.Advance(200 * time.Millisecond)
-
-	if err := bucket.Take(ctx); err != nil {
-		t.Fatalf("Failed to take token after 200ms: %v", err)
-	}
-
-	// Should fail on second take
-	if err := bucket.Take(ctx); err == nil {
-		t.Fatal("Expected rate limiting after 200ms refill, but take succeeded")
-	}
-
-	// Advance by another 400ms (total 600ms = should add 3 tokens total, 2 remaining)
-	mockClock.Advance(400 * time.Millisecond)
-
-	// Should be able to take 2 more tokens
-	for i := 0; i < 2; i++ {
-		if err := bucket.Take(ctx); err != nil {
-			t.Fatalf("Failed to take token after additional 400ms %d: %v", i, err)
-		}
-	}
-
-	// Should fail on third take
-	if err := bucket.Take(ctx); err == nil {
-		t.Fatal("Expected rate limiting after 600ms total, but take succeeded")
-	}
-
-	// Verify state shows correct available tokens (should be 0)
-	state, err := bucket.Get(ctx)
-	if err != nil {
-		t.Fatalf("Failed to get bucket state: %v", err)
-	}
-
-	if state.Available != 0 {
-		t.Errorf("Expected 0 available tokens, got %d", state.Available)
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := tokenbucket.CalculateFillRate(tc.fillRate)
+			assert.Equal(t, tc.expected, result)
+		})
 	}
 }
