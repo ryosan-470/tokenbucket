@@ -2,16 +2,11 @@ package tokenbucket
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/mennanov/limiters"
 
 	"github.com/ryosan-470/tokenbucket/storage/dynamodb"
-)
-
-const (
-	lockIDPrefix = "bucket_lock_"
 )
 
 type TokenBucket interface {
@@ -55,9 +50,9 @@ func WithLogger(l limiters.Logger) Option {
 	}
 }
 
-func WithoutLock() Option {
+func WithLockBackend(cfg *dynamodb.LockBackendConfig, lockID string) Option {
 	return func(o *options) {
-		o.lock = limiters.NewLockNoop()
+		o.lock = cfg.NewLockBackend(lockID)
 	}
 }
 
@@ -68,7 +63,10 @@ func WithLimitersBackend(cfg *dynamodb.BucketBackendConfig, enableRaceHandling b
 	}
 }
 
-func NewBucket(capacity, fillRate int64, dimension string, cfg *dynamodb.BucketBackendConfig, opts ...Option) (*Bucket, error) {
+func NewBucket(capacity, fillRate int64, dimension string, backendConfig *dynamodb.BucketBackendConfig, opts ...Option) (*Bucket, error) {
+	if backendConfig == nil {
+		return nil, ErrInitializedBucketFailed
+	}
 	opt := &options{
 		clock:  limiters.NewSystemClock(),
 		logger: &limiters.StdLogger{},
@@ -82,7 +80,7 @@ func NewBucket(capacity, fillRate int64, dimension string, cfg *dynamodb.BucketB
 		backend = opt.backend
 	} else {
 		var err error
-		backend, err = cfg.NewCustomBackend(context.Background())
+		backend, err = backendConfig.NewCustomBackend(context.Background())
 		if err != nil {
 			return nil, ErrInitializedBucketFailed
 		}
@@ -92,8 +90,7 @@ func NewBucket(capacity, fillRate int64, dimension string, cfg *dynamodb.BucketB
 	if opt.lock != nil {
 		lock = opt.lock
 	} else {
-		lockID := fmt.Sprintf("%s%s", lockIDPrefix, dimension)
-		lock = cfg.NewLock(lockID)
+		lock = limiters.NewLockNoop()
 	}
 
 	bucket := limiters.NewTokenBucket(
