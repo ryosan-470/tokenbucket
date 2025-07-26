@@ -1,5 +1,6 @@
 {
   "contextFileName": "CLAUDE.md",
   "preferredEditor": "vscode",
-  "usageStatisticsEnabled": false
+  "usageStatisticsEnabled": false,
+  "theme": "Atom One"
 }
