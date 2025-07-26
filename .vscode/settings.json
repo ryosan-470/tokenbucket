@@ -8,6 +8,7 @@
     "ryosan",
     "stretchr",
     "testcontainers",
+    "testutils",
     "tokenbucket"
   ],
 
