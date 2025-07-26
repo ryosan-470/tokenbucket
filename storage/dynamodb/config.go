@@ -9,24 +9,16 @@ import (
 )
 
 type BucketBackendConfig struct {
-	client        *dynamodb.Client
-	tableName     string
-	dimension     string
-	lockTableName string
-	lockTTL       time.Duration
-	lockMaxTries  uint
-	lockMaxTime   time.Duration
+	client    *dynamodb.Client
+	tableName string
+	dimension string
 }
 
-func NewBucketBackendConfig(client *dynamodb.Client, tableName, dimension, lockTableName string, lockTTL time.Duration, lockMaxTries uint, lockMaxTime time.Duration) *BucketBackendConfig {
+func NewBucketBackendConfig(client *dynamodb.Client, tableName, dimension string) *BucketBackendConfig {
 	return &BucketBackendConfig{
-		client:        client,
-		tableName:     tableName,
-		dimension:     dimension,
-		lockTableName: lockTableName,
-		lockTTL:       lockTTL,
-		lockMaxTries:  lockMaxTries,
-		lockMaxTime:   lockMaxTime,
+		client:    client,
+		tableName: tableName,
+		dimension: dimension,
 	}
 }
 
@@ -61,7 +53,26 @@ func (b *BucketBackendConfig) NewCustomBackend(ctx context.Context) (BucketBacke
 	), nil
 }
 
-func (b *BucketBackendConfig) NewLock(lockID string) *Lock {
+type LockBackendConfig struct {
+	client        *dynamodb.Client
+	lockTableName string
+	lockID        string
+	lockTTL       time.Duration
+	lockMaxTries  uint
+	lockMaxTime   time.Duration
+}
+
+func NewLockBackendConfig(client *dynamodb.Client, lockTableName string, lockTTL time.Duration, lockMaxTries uint, lockMaxTime time.Duration) *LockBackendConfig {
+	return &LockBackendConfig{
+		client:        client,
+		lockTableName: lockTableName,
+		lockTTL:       lockTTL,
+		lockMaxTries:  lockMaxTries,
+		lockMaxTime:   lockMaxTime,
+	}
+}
+
+func (b *LockBackendConfig) NewLockBackend(lockID string) *Lock {
 	return NewLock(
 		b.client,
 		b.lockTableName,
