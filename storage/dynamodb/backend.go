@@ -112,12 +112,26 @@ func (b *Backend) SetState(ctx context.Context, state limiters.TokenBucketState)
 }
 
 func (b *Backend) Reset(ctx context.Context) error {
-	state := limiters.TokenBucketState{
+	updateExpr := makeUpdateExpressionBuilder(limiters.TokenBucketState{
 		Last:      0,
 		Available: 0,
+	}, 0)
+
+	expr, err := expression.NewBuilder().WithUpdate(updateExpr).Build()
+	if err != nil {
+		return err
 	}
 
-	if err := b.SetState(ctx, state); err != nil {
+	input := &dynamodb.UpdateItemInput{
+		TableName:                 aws.String(b.tableProps.TableName),
+		Key:                       b.keys,
+		ExpressionAttributeNames:  expr.Names(),
+		ExpressionAttributeValues: expr.Values(),
+		UpdateExpression:          expr.Update(),
+		ReturnValues:              types.ReturnValueNone,
+	}
+
+	if _, err := b.client.UpdateItem(ctx, input); err != nil {
 		return err
 	}
 
