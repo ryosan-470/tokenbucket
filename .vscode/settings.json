@@ -1,10 +1,12 @@
 {
   "cSpell.words": [
+    "attributevalue",
     "cenkalti",
     "dynamodbcontainer",
     "dynamodbstorage",
     "mennanov",
     "ryosan",
+    "stretchr",
     "testcontainers",
     "tokenbucket"
   ],
