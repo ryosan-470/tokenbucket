@@ -6,6 +6,7 @@
     "dynamodbstorage",
     "mennanov",
     "ryosan",
+    "stretchr",
     "testcontainers",
     "tokenbucket"
   ],

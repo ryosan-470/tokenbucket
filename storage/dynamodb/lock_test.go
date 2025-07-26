@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestStorageLockTable(t *testing.T) {
@@ -21,16 +23,10 @@ func TestStorageLockTable(t *testing.T) {
 		ctx := context.Background()
 
 		// Test successful lock acquisition
-		err := lock.Lock(ctx)
-		if err != nil {
-			t.Fatalf("Failed to acquire lock: %v", err)
-		}
+		require.NoError(t, lock.Lock(ctx), "Failed to acquire lock")
 
 		// Test successful unlock
-		err = lock.Unlock(ctx)
-		if err != nil {
-			t.Fatalf("Failed to release lock: %v", err)
-		}
+		require.NoError(t, lock.Unlock(ctx), "Failed to release lock")
 	})
 
 	t.Run("ConcurrentLock", func(t *testing.T) {
@@ -48,38 +44,21 @@ func TestStorageLockTable(t *testing.T) {
 		ctx := context.Background()
 
 		// First lock should succeed
-		err := lock1.Lock(ctx)
-		if err != nil {
-			t.Fatalf("Failed to acquire first lock: %v", err)
-		}
+		require.NoError(t, lock1.Lock(ctx), "Failed to acquire first lock")
 
 		// Second lock should fail due to contention
-		err = lock2.Lock(ctx)
-		if err == nil {
-			t.Fatal("Expected second lock to fail, but it succeeded")
-		}
-
-		if err != ErrLockAlreadyHeld {
-			t.Fatalf("Expected ErrLockAlreadyHeld, got: %v", err)
-		}
+		err := lock2.Lock(ctx)
+		require.Error(t, err, "Expected second lock to fail, but it succeeded")
+		require.Equal(t, ErrLockAlreadyHeld, err, "Expected ErrLockAlreadyHeld")
 
 		// Release first lock
-		err = lock1.Unlock(ctx)
-		if err != nil {
-			t.Fatalf("Failed to release first lock: %v", err)
-		}
+		require.NoError(t, lock1.Unlock(ctx), "Failed to release first lock")
 
 		// Now second lock should succeed
-		err = lock2.Lock(ctx)
-		if err != nil {
-			t.Fatalf("Failed to acquire second lock after first was released: %v", err)
-		}
+		require.NoError(t, lock2.Lock(ctx), "Failed to acquire second lock after first was released")
 
 		// Clean up
-		err = lock2.Unlock(ctx)
-		if err != nil {
-			t.Fatalf("Failed to release second lock: %v", err)
-		}
+		require.NoError(t, lock2.Unlock(ctx), "Failed to release second lock")
 	})
 
 	t.Run("TTLExpiration", func(t *testing.T) {
@@ -95,10 +74,7 @@ func TestStorageLockTable(t *testing.T) {
 		ctx := context.Background()
 
 		// Acquire lock
-		err := lock.Lock(ctx)
-		if err != nil {
-			t.Fatalf("Failed to acquire lock: %v", err)
-		}
+		require.NoError(t, lock.Lock(ctx), "Failed to acquire lock")
 
 		// Wait for TTL to expire (a bit longer than TTL)
 		time.Sleep(3 * time.Second)
@@ -109,16 +85,10 @@ func TestStorageLockTable(t *testing.T) {
 			WithBackoffMaxTime(5*time.Second))
 
 		// Should be able to acquire lock after TTL expiration
-		err = newLock.Lock(ctx)
-		if err != nil {
-			t.Fatalf("Failed to acquire lock after TTL expiration: %v", err)
-		}
+		require.NoError(t, newLock.Lock(ctx), "Failed to acquire lock after TTL expiration")
 
 		// Clean up
-		err = newLock.Unlock(ctx)
-		if err != nil {
-			t.Fatalf("Failed to release lock: %v", err)
-		}
+		require.NoError(t, newLock.Unlock(ctx), "Failed to release lock")
 	})
 
 	t.Run("UnlockNonExistentLock", func(t *testing.T) {
@@ -133,15 +103,11 @@ func TestStorageLockTable(t *testing.T) {
 		ctx := context.Background()
 
 		// Try to unlock a lock that was never acquired
-		err := lock.Unlock(ctx)
-		// Should not return an error (graceful handling)
-		if err != nil {
-			t.Fatalf("Unexpected error when unlocking non-existent lock: %v", err)
-		}
+		require.NoError(t, lock.Unlock(ctx), "Unexpected error when unlocking non-existent lock")
 	})
 
 	t.Run("UnlockWrongOwner", func(t *testing.T) {
-		tableName := "test-lock-table-wrongowner"
+		tableName := "test-lock-table-wrong-owner"
 		infra.CreateLockTable(t, tableName)
 		defer infra.DeleteTable(t, tableName)
 
@@ -155,22 +121,12 @@ func TestStorageLockTable(t *testing.T) {
 		ctx := context.Background()
 
 		// First lock acquires
-		err := lock1.Lock(ctx)
-		if err != nil {
-			t.Fatalf("Failed to acquire first lock: %v", err)
-		}
+		require.NoError(t, lock1.Lock(ctx), "Failed to acquire first lock")
 
 		// Second lock tries to unlock (wrong owner)
-		err = lock2.Unlock(ctx)
-		// Should not return an error (graceful handling)
-		if err != nil {
-			t.Fatalf("Unexpected error when unlocking with wrong owner: %v", err)
-		}
+		require.NoError(t, lock2.Unlock(ctx), "Unexpected error when unlocking with wrong owner")
 
 		// First lock should still be able to unlock
-		err = lock1.Unlock(ctx)
-		if err != nil {
-			t.Fatalf("Failed to release lock with correct owner: %v", err)
-		}
+		require.NoError(t, lock1.Unlock(ctx), "Failed to release lock with correct owner")
 	})
 }
