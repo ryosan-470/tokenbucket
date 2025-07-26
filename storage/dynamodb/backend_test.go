@@ -26,10 +26,6 @@ func TestBackend(t *testing.T) {
 		defer infra.DeleteTable(t, props.TableName)
 		backend := NewBackend(infra.Client, testBackendPartitionKey, props, 1*time.Hour)
 		require.NotNil(t, backend)
-		assert.Equal(t, infra.Client, backend.client)
-		assert.Equal(t, testBackendPartitionKey, backend.partitionKey)
-		assert.Equal(t, props, backend.tableProps)
-		assert.Equal(t, int64(0), backend.latestVersion)
 	})
 
 	t.Run("State when item does not exist", func(t *testing.T) {
@@ -54,13 +50,11 @@ func TestBackend(t *testing.T) {
 
 		err := backend.SetState(ctx, initialState)
 		require.NoError(t, err)
-		assert.Equal(t, int64(1), backend.latestVersion, "version should be incremented after SetState")
 
 		state, err := backend.State(ctx)
 		require.NoError(t, err)
 		assert.Equal(t, initialState.Last, state.Last)
 		assert.Equal(t, initialState.Available, state.Available)
-		assert.Equal(t, int64(1), backend.latestVersion, "version should be loaded after State")
 	})
 
 	t.Run("Reset", func(t *testing.T) {
@@ -76,19 +70,16 @@ func TestBackend(t *testing.T) {
 		}
 		err := backend.SetState(ctx, initialState)
 		require.NoError(t, err)
-		assert.Equal(t, int64(1), backend.latestVersion)
 
 		// Now reset it
 		err = backend.Reset(ctx)
 		require.NoError(t, err)
-		assert.Equal(t, int64(0), backend.latestVersion, "local version should be 0 after reset")
 
 		// Verify state in DB is reset
 		state, err := backend.State(ctx)
 		require.NoError(t, err)
 		assert.Equal(t, int64(0), state.Last)
 		assert.Equal(t, int64(0), state.Available)
-		assert.Equal(t, int64(0), backend.latestVersion, "version from DB should be 0 after reset")
 	})
 
 	t.Run("SetState with optimistic locking", func(t *testing.T) {
@@ -108,26 +99,20 @@ func TestBackend(t *testing.T) {
 		require.NoError(t, err)
 		_, err = backend2.State(ctx)
 		require.NoError(t, err)
-		require.Equal(t, int64(0), backend1.latestVersion)
-		require.Equal(t, int64(0), backend2.latestVersion)
 
 		// Backend1 updates the state successfully
 		err = backend1.SetState(ctx, limiters.TokenBucketState{Last: 1, Available: 1})
 		require.NoError(t, err)
-		require.Equal(t, int64(1), backend1.latestVersion)
 
 		// Backend2 tries to update with an old version (0), which should fail
 		err = backend2.SetState(ctx, limiters.TokenBucketState{Last: 2, Available: 2})
 		require.Error(t, err, "expected an error due to conditional check failure")
-		// The local version for backend2 should not be incremented
-		require.Equal(t, int64(0), backend2.latestVersion)
 
 		// Verify the state in DB is still from backend1's update
 		state, err := backend2.State(ctx)
 		require.NoError(t, err)
 		assert.Equal(t, int64(1), state.Last)
 		assert.Equal(t, int64(1), state.Available)
-		assert.Equal(t, int64(1), backend2.latestVersion, "backend2 should have loaded the new version")
 	})
 
 	t.Run("SetState concurrent", func(t *testing.T) {

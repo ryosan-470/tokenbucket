@@ -21,15 +21,17 @@ type Backend struct {
 	keys          map[string]types.AttributeValue
 }
 
+type BucketBackendInterface interface {
+	limiters.TokenBucketStateBackend
+}
+
 const (
 	attributeNameBackendLast      = "Last"
 	attributeNameBackendVersion   = "Version"
 	attributeNameBackendAvailable = "Available"
 )
 
-var _ limiters.TokenBucketStateBackend = (*Backend)(nil)
-
-func NewBackend(client *dynamodb.Client, partitionKey string, tableProps limiters.DynamoDBTableProperties, ttl time.Duration) *Backend {
+func NewBackend(client *dynamodb.Client, partitionKey string, tableProps limiters.DynamoDBTableProperties, ttl time.Duration) BucketBackendInterface {
 	keys := map[string]types.AttributeValue{
 		tableProps.PartitionKeyName: &types.AttributeValueMemberS{Value: partitionKey},
 	}
