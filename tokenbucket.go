@@ -61,8 +61,8 @@ func WithoutLock() Option {
 	}
 }
 
-func WithOriginalBackend(cfg *dynamodb.BucketBackendConfig, race bool) Option {
-	backend, _ := cfg.NewTokenBucketDynamoDB(context.Background(), race)
+func WithLimitersBackend(cfg *dynamodb.BucketBackendConfig, enableRaceHandling bool) Option {
+	backend, _ := cfg.NewLimitersBackend(context.Background(), enableRaceHandling)
 	return func(o *options) {
 		o.backend = backend
 	}
@@ -82,7 +82,7 @@ func NewBucket(capacity, fillRate int64, dimension string, cfg *dynamodb.BucketB
 		backend = opt.backend
 	} else {
 		var err error
-		backend, err = cfg.NewBucket(context.Background())
+		backend, err = cfg.NewCustomBackend(context.Background())
 		if err != nil {
 			return nil, ErrInitializedBucketFailed
 		}

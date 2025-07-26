@@ -30,8 +30,8 @@ func NewBucketBackendConfig(client *dynamodb.Client, tableName, dimension, lockT
 	}
 }
 
-// NewTokenBucketDynamoDB creates a new TokenBucketDynamoDB instance implemented by the limiters package.
-func (b *BucketBackendConfig) NewTokenBucketDynamoDB(ctx context.Context, race bool) (BucketBackendInterface, error) {
+// NewLimitersBackend creates a new TokenBucketDynamoDB instance implemented by the limiters package.
+func (b *BucketBackendConfig) NewLimitersBackend(ctx context.Context, enableRaceHandling bool) (BucketBackendInterface, error) {
 	props, err := limiters.LoadDynamoDBTableProperties(ctx, b.client, b.tableName)
 	if err != nil {
 		return nil, err
@@ -42,12 +42,12 @@ func (b *BucketBackendConfig) NewTokenBucketDynamoDB(ctx context.Context, race b
 		b.dimension,
 		props,
 		time.Duration(1*time.Second), // Default fill rate
-		race,
+		enableRaceHandling,
 	), nil
 }
 
-// NewBucket creates a new Bucket instance instance implemented by this package.
-func (b *BucketBackendConfig) NewBucket(ctx context.Context) (BucketBackendInterface, error) {
+// NewCustomBackend creates a new Bucket instance implemented by this package.
+func (b *BucketBackendConfig) NewCustomBackend(ctx context.Context) (BucketBackendInterface, error) {
 	props, err := limiters.LoadDynamoDBTableProperties(ctx, b.client, b.tableName)
 	if err != nil {
 		return nil, err
