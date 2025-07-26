@@ -52,7 +52,7 @@ func GetTestInfrastructure() *TestInfrastructure {
 }
 
 // CreateLockTable creates a DynamoDB table for lock testing
-func (ti *TestInfrastructure) CreateLockTable(t *testing.T, tableName string) {
+func (ti *TestInfrastructure) CreateLockTable(t *testing.T, tableName string) limiters.DynamoDBTableProperties {
 	_, err := ti.Client.CreateTable(backend.Ctx, &dynamodb.CreateTableInput{
 		TableName: aws.String(tableName),
 		AttributeDefinitions: []types.AttributeDefinition{
@@ -92,6 +92,14 @@ func (ti *TestInfrastructure) CreateLockTable(t *testing.T, tableName string) {
 	if err != nil {
 		t.Fatalf("Failed to enable TTL on table: %v", err)
 	}
+
+	// Load table properties using limiters library
+	props, err := limiters.LoadDynamoDBTableProperties(backend.Ctx, ti.Client, tableName)
+	if err != nil {
+		t.Fatalf("Failed to load DynamoDB table properties: %v", err)
+	}
+
+	return props
 }
 
 // CreateTokenBucketTable creates a DynamoDB table for token bucket testing
