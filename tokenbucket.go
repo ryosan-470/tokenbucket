@@ -29,15 +29,16 @@ type Bucket struct {
 	LastUpdated int64  // Timestamp of the last update in milliseconds
 	Dimension   string // Dimension of the token bucket
 
-	backend *limiters.TokenBucketDynamoDB // Backend of the token bucket
-	bucket  *limiters.TokenBucket         // Underlying token bucket implementation
-	lock    limiters.DistLocker           // DynamoDB lock for distributed coordination
+	backend dynamodb.BucketBackendInterface
+	bucket  *limiters.TokenBucket // Underlying token bucket implementation
+	lock    limiters.DistLocker   // DynamoDB lock for distributed coordination
 }
 
 type options struct {
-	clock  limiters.Clock
-	logger limiters.Logger
-	lock   limiters.DistLocker
+	clock   limiters.Clock
+	logger  limiters.Logger
+	lock    limiters.DistLocker
+	backend dynamodb.BucketBackendInterface
 }
 
 type Option func(*options)
@@ -60,6 +61,13 @@ func WithoutLock() Option {
 	}
 }
 
+func WithOriginalBackend(cfg *dynamodb.BucketBackendConfig, race bool) Option {
+	backend, _ := cfg.NewTokenBucketDynamoDB(context.Background(), race)
+	return func(o *options) {
+		o.backend = backend
+	}
+}
+
 func NewBucket(capacity, fillRate int64, dimension string, cfg *dynamodb.BucketBackendConfig, opts ...Option) (*Bucket, error) {
 	opt := &options{
 		clock:  limiters.NewSystemClock(),
@@ -69,9 +77,15 @@ func NewBucket(capacity, fillRate int64, dimension string, cfg *dynamodb.BucketB
 		o(opt)
 	}
 
-	backend, err := cfg.NewTokenBucketDynamoDB(context.Background())
-	if err != nil {
-		return nil, ErrInitializedBucketFailed
+	var backend dynamodb.BucketBackendInterface
+	if opt.backend != nil {
+		backend = opt.backend
+	} else {
+		var err error
+		backend, err = cfg.NewBucket(context.Background())
+		if err != nil {
+			return nil, ErrInitializedBucketFailed
+		}
 	}
 
 	var lock limiters.DistLocker
