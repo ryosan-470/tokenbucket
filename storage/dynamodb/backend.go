@@ -86,7 +86,9 @@ func (b *Backend) makeTokenBucketState(item map[string]types.AttributeValue) (li
 
 func (b *Backend) SetState(ctx context.Context, state limiters.TokenBucketState) error {
 	updateExpr := makeUpdateExpressionBuilder(state, b.latestVersion+1)
-	cond := expression.Name(attributeNameBackendVersion).Equal(expression.Value(b.latestVersion))
+	cond := expression.Name(attributeNameBackendVersion).AttributeNotExists().Or(
+		expression.Name(attributeNameBackendVersion).Equal(expression.Value(b.latestVersion)),
+	)
 
 	expr, err := expression.NewBuilder().WithUpdate(updateExpr).WithCondition(cond).Build()
 	if err != nil {
