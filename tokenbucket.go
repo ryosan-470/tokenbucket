@@ -57,7 +57,12 @@ func WithLockBackend(cfg *dynamodb.LockBackendConfig, lockID string) Option {
 }
 
 func WithLimitersBackend(cfg *dynamodb.BucketBackendConfig, enableRaceHandling bool) Option {
-	backend, _ := cfg.NewLimitersBackend(context.Background(), enableRaceHandling)
+	backend, err := cfg.NewLimitersBackend(context.Background(), enableRaceHandling)
+	if err != nil {
+		return func(o *options) {
+			o.backend = nil
+		}
+	}
 	return func(o *options) {
 		o.backend = backend
 	}
