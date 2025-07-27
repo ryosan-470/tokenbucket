@@ -168,7 +168,8 @@ func TestTokenBucket(t *testing.T) {
 				// If tokens are still available, continue taking until exhausted
 				for state.Available > 0 {
 					bucket.Take(ctx)
-					state, _ = bucket.Get(ctx)
+					state, err = bucket.Get(ctx)
+					require.NoError(t, err)
 				}
 			}
 
@@ -186,10 +187,12 @@ func TestTokenBucket(t *testing.T) {
 			require.NoError(t, err)
 
 			// Exhaust all tokens
-			state, _ := bucket.Get(ctx)
+			state, err := bucket.Get(ctx)
+			require.NoError(t, err)
 			for state.Available > 0 {
 				bucket.Take(ctx)
-				state, _ = bucket.Get(ctx)
+				state, err = bucket.Get(ctx)
+				require.NoError(t, err)
 			}
 
 			// Next take should fail
