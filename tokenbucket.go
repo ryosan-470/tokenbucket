@@ -123,25 +123,20 @@ func (b *Bucket) Take(ctx context.Context) error {
 	if _, err := b.bucket.Take(ctx, 1); err != nil {
 		return err
 	}
+
+	// TODO: update Available and LastUpdated fields
 	return nil
 }
 
-func (b *Bucket) Get(ctx context.Context) (*Bucket, error) {
+func (b *Bucket) Get(ctx context.Context) error {
 	state, err := b.backend.State(ctx)
 	if err != nil {
-		return nil, err
+		return nil
 	}
 
-	return &Bucket{
-		Capacity:    b.Capacity,
-		FillRate:    b.FillRate,
-		Available:   state.Available,
-		LastUpdated: state.Last,
-		Dimension:   b.Dimension,
-		backend:     b.backend,
-		bucket:      b.bucket,
-		lock:        b.lock,
-	}, nil
+	b.Available = state.Available
+	b.LastUpdated = state.Last
+	return nil
 }
 
 func calculateFillRate(fillRate int64) time.Duration {
