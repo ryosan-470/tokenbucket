@@ -93,9 +93,17 @@ func NewBucket(capacity, fillRate int64, dimension string, backendConfig *dynamo
 		lock = limiters.NewLockNoop()
 	}
 
+	var fillInterval time.Duration
+	if fillRate <= 0 {
+		// When fill rate is 0 or negative, use a very large interval to effectively disable refilling
+		fillInterval = time.Hour * 24 * 365 // 1 year
+	} else {
+		fillInterval = calculateFillRate(fillRate)
+	}
+
 	bucket := limiters.NewTokenBucket(
 		capacity,
-		calculateFillRate(fillRate),
+		fillInterval,
 		lock,
 		backend,
 		opt.clock,
@@ -138,9 +146,13 @@ func (b *Bucket) Get(ctx context.Context) (*Bucket, error) {
 	}, nil
 }
 
-func calculateFillRate(fillRate int64) time.Duration {
+func CalculateFillRate(fillRate int64) time.Duration {
 	if fillRate <= 0 {
 		return 0
 	}
 	return time.Second / time.Duration(fillRate)
+}
+
+func calculateFillRate(fillRate int64) time.Duration {
+	return CalculateFillRate(fillRate)
 }
