@@ -116,7 +116,7 @@ func runSingleDimensionTest(provider storage.Provider, cfg Config) (benchmark.Re
 
 func runMultiDimensionTest(provider storage.Provider, cfg Config) (benchmark.Report, error) {
 	var opts []tokenbucket.Option
-	if !cfg.WithLock {
+	if cfg.WithLock {
 		lockBackendCfg := provider.CreateLockBackendConfig()
 		opts = append(opts, tokenbucket.WithLockBackend(lockBackendCfg, uuid.NewString()))
 	}
