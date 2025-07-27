@@ -116,10 +116,6 @@ func (h *LocalProvider) CreateBucketConfig(dimension string) *dynamodbstorage.Bu
 		h.client,
 		h.bucketTableName,
 		dimension,
-		h.lockTableName,
-		30*time.Second,
-		3,
-		5*time.Second,
 	)
 }
 
@@ -127,6 +123,11 @@ func (h *LocalProvider) CreateBucketConfig(dimension string) *dynamodbstorage.Bu
 func (h *LocalProvider) CreateBucket(capacity, fillRate int64, dimension string, opts ...tokenbucket.Option) (*tokenbucket.Bucket, error) {
 	cfg := h.CreateBucketConfig(dimension)
 	return tokenbucket.NewBucket(capacity, fillRate, dimension, cfg, opts...)
+}
+
+// CreateLockBackendConfig creates a lock backend configuration for distributed locking
+func (h *LocalProvider) CreateLockBackendConfig() *dynamodbstorage.LockBackendConfig {
+	return createLockBackendConfig(h.client, h.lockTableName)
 }
 
 func (h *LocalProvider) createTokenBucketTable(ctx context.Context) error {
@@ -216,13 +217,10 @@ func (h *LocalProvider) createLockTable(ctx context.Context) error {
 // BenchmarkSetup is a helper function for benchmark setup
 func BenchmarkSetup(b *testing.B) *LocalProvider {
 	b.Helper()
-	
 	ctx := context.Background()
 	provider := GetLocalProvider()
-	
 	if err := provider.Setup(ctx); err != nil {
 		b.Fatalf("Failed to setup benchmark provider: %v", err)
 	}
-	
 	return provider
 }

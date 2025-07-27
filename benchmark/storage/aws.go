@@ -81,10 +81,6 @@ func (h *AWSProvider) CreateBucketConfig(dimension string) *dynamodbstorage.Buck
 		h.client,
 		h.bucketTableName,
 		dimension,
-		h.lockTableName,
-		30*time.Second,
-		3,
-		5*time.Second,
 	)
 }
 
@@ -92,6 +88,11 @@ func (h *AWSProvider) CreateBucketConfig(dimension string) *dynamodbstorage.Buck
 func (h *AWSProvider) CreateBucket(capacity, fillRate int64, dimension string, opts ...tokenbucket.Option) (*tokenbucket.Bucket, error) {
 	cfg := h.CreateBucketConfig(dimension)
 	return tokenbucket.NewBucket(capacity, fillRate, dimension, cfg, opts...)
+}
+
+// CreateLockBackendConfig creates a lock backend configuration for distributed locking
+func (h *AWSProvider) CreateLockBackendConfig() *dynamodbstorage.LockBackendConfig {
+	return createLockBackendConfig(h.client, h.lockTableName)
 }
 
 func (h *AWSProvider) createTokenBucketTableIfNotExists(ctx context.Context) error {
