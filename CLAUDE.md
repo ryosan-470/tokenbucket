@@ -15,11 +15,23 @@ The codebase is organized as follows:
   - `Bucket` struct containing capacity, fill rate, available tokens, and backend
   - Uses the `github.com/mennanov/limiters` library as the underlying implementation
   - `errors.go`: Custom error definitions for the library
+  - `tokenbucket.go`: Core bucket implementation with functional options pattern
+  - `tokenbucket_test.go`: Main test suite for token bucket functionality
+  - `main_test.go`: Integration tests
+  - `export_test.go`: Test utilities to export internal functions for testing
 
 - **Storage layer (`storage/dynamodb/`)**: DynamoDB-specific implementations
   - `config.go`: Backend configuration for DynamoDB token bucket storage and lock settings
+  - `backend.go`: Custom DynamoDB backend implementation with state management
+  - `backend_test.go`: Backend-specific test suite
   - `lock.go`: Distributed locking implementation using DynamoDB with TTL and backoff
   - `lock_test.go`: Comprehensive test suite for lock functionality
+  - `main_test.go`: Integration test setup for DynamoDB components
+
+- **Internal utilities (`internal/testutils/`)**: Test infrastructure
+  - `dynamodb.go`: DynamoDB Local test container setup and utilities
+  - `helper.go`: General test helper functions
+  - `time.go`: Time-related test utilities
 
 - **Benchmark package (`benchmark/`)**: Performance testing and metrics
   - `cmd/benchmark/main.go`: Command-line benchmarking tool
@@ -29,6 +41,7 @@ The codebase is organized as follows:
     - `local.go`: Local/in-memory storage for benchmarks
     - `storage.go`: Common storage interfaces
   - `tokenbucket_test.go`: Benchmark tests
+  - `results/`: Directory for storing benchmark results
 
 ## Key Design Patterns
 
@@ -122,17 +135,22 @@ Typical usage involves:
    - Table names for token bucket and locks
    - Lock settings (TTL, retry parameters)
 
-2. **Bucket Creation**: Instantiating a `Bucket` with:
+2. **Bucket Creation**: Using `NewBucket()` with:
    - Capacity (maximum tokens)
    - Fill rate (tokens per second)
    - Dimension (unique identifier)
-   - Optional parameters (clock, logger, lock behavior)
+   - Backend configuration
+   - Optional functional options:
+     - `WithClock()`: Custom clock for testing
+     - `WithLogger()`: Custom logger
+     - `WithLockBackend()`: Distributed locking configuration
+     - `WithLimitersBackend()`: Custom backend implementation
 
 3. **Operations**:
-   - `Take()`: Consume tokens from the bucket
-   - `Get()`: Check current bucket state
+   - `Take(ctx)`: Consume tokens from the bucket
+   - `Get(ctx)`: Check current bucket state including available tokens and last updated timestamp
 
-4. **Distributed Coordination**: The library handles distributed locking automatically via DynamoDB
+4. **Distributed Coordination**: The library handles distributed locking automatically via DynamoDB when configured
 
 ## Configuration Options
 
@@ -144,7 +162,8 @@ Typical usage involves:
 ### Bucket Options
 - `WithClock()`: Custom clock implementation for testing
 - `WithLogger()`: Custom logger for debugging
-- `WithoutLock()`: Disable distributed locking (for single-node deployments)
+- `WithLockBackend()`: Configure distributed locking with DynamoDB
+- `WithLimitersBackend()`: Use custom backend implementation with race handling options
 
 ## Localization Guidelines
 
