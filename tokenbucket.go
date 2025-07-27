@@ -131,7 +131,7 @@ func (b *Bucket) Take(ctx context.Context) error {
 func (b *Bucket) Get(ctx context.Context) error {
 	state, err := b.backend.State(ctx)
 	if err != nil {
-		return nil
+		return err
 	}
 
 	b.Available = state.Available
