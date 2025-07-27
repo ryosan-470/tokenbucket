@@ -178,8 +178,10 @@ func TestTokenBucket(t *testing.T) {
 		})
 
 		t.Run("WithTokenRefill", func(t *testing.T) {
+			mockClock := testutils.NewMockClock(time.Now())
 			bucket, err := tokenbucket.NewBucket(
 				5, 5, dimension+"-refill", bucketCfg,
+				tokenbucket.WithClock(mockClock),
 			)
 			require.NoError(t, err)
 
@@ -194,8 +196,8 @@ func TestTokenBucket(t *testing.T) {
 			err = bucket.Take(ctx)
 			require.Error(t, err)
 
-			// Wait for token refill (1 second should add 5 tokens)
-			time.Sleep(1200 * time.Millisecond)
+			// Advance time by 1.2 seconds (should add 6 tokens: 5 tokens/sec * 1.2 sec)
+			mockClock.Advance(1200 * time.Millisecond)
 
 			// Now take should succeed
 			err = bucket.Take(ctx)
