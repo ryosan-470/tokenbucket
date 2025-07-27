@@ -1,4 +1,4 @@
-package dynamodb
+package tokenbucket_test
 
 import (
 	"context"
@@ -12,11 +12,12 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/mennanov/limiters"
 	"github.com/ryosan-470/tokenbucket/internal/testutils"
+
+	ddbbackend "github.com/ryosan-470/tokenbucket/storage/dynamodb"
 )
 
 var backend *testutils.DynamoDBTestBackend
 
-// TestMain sets up and tears down the shared test infrastructure
 func TestMain(m *testing.M) {
 	var err error
 	backend, err = testutils.SetupDynamoDBTestBackend(context.Background())
@@ -38,13 +39,11 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// TestInfrastructure provides convenient access to shared test resources
 type TestInfrastructure struct {
 	Client *dynamodb.Client
 	Ctx    context.Context
 }
 
-// GetTestInfrastructure returns the shared test infrastructure
 func GetTestInfrastructure() *TestInfrastructure {
 	return &TestInfrastructure{
 		Client: backend.Client,
@@ -53,18 +52,18 @@ func GetTestInfrastructure() *TestInfrastructure {
 }
 
 // CreateLockTable creates a DynamoDB table for lock testing
-func (ti *TestInfrastructure) CreateLockTable(t *testing.T, tableName string) {
+func (ti *TestInfrastructure) CreateLockTable(t *testing.T, tableName string) limiters.DynamoDBTableProperties {
 	_, err := ti.Client.CreateTable(backend.Ctx, &dynamodb.CreateTableInput{
 		TableName: aws.String(tableName),
 		AttributeDefinitions: []types.AttributeDefinition{
 			{
-				AttributeName: aws.String(AttributeNameLockID),
+				AttributeName: aws.String(ddbbackend.AttributeNameLockID),
 				AttributeType: types.ScalarAttributeTypeS,
 			},
 		},
 		KeySchema: []types.KeySchemaElement{
 			{
-				AttributeName: aws.String(AttributeNameLockID),
+				AttributeName: aws.String(ddbbackend.AttributeNameLockID),
 				KeyType:       types.KeyTypeHash,
 			},
 		},
@@ -86,13 +85,21 @@ func (ti *TestInfrastructure) CreateLockTable(t *testing.T, tableName string) {
 	_, err = ti.Client.UpdateTimeToLive(backend.Ctx, &dynamodb.UpdateTimeToLiveInput{
 		TableName: aws.String(tableName),
 		TimeToLiveSpecification: &types.TimeToLiveSpecification{
-			AttributeName: aws.String(AttributeNameTTL),
+			AttributeName: aws.String(ddbbackend.AttributeNameTTL),
 			Enabled:       aws.Bool(true),
 		},
 	})
 	if err != nil {
 		t.Fatalf("Failed to enable TTL on table: %v", err)
 	}
+
+	// Load table properties using limiters library
+	props, err := limiters.LoadDynamoDBTableProperties(backend.Ctx, ti.Client, tableName)
+	if err != nil {
+		t.Fatalf("Failed to load DynamoDB table properties: %v", err)
+	}
+
+	return props
 }
 
 // CreateTokenBucketTable creates a DynamoDB table for token bucket testing
