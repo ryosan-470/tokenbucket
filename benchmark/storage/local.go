@@ -112,21 +112,18 @@ func (h *LocalProvider) Cleanup(ctx context.Context) error {
 
 // CreateBucketConfig creates a bucket configuration for the given dimension
 func (h *LocalProvider) CreateBucketConfig(dimension string) *dynamodbstorage.BucketBackendConfig {
-	return dynamodbstorage.NewBucketBackendConfig(
-		h.client,
-		h.bucketTableName,
-		dimension,
-		h.lockTableName,
-		30*time.Second,
-		3,
-		5*time.Second,
-	)
+	return dynamodbstorage.NewBucketBackendConfig(h.client, h.bucketTableName)
 }
 
 // CreateBucket creates a TokenBucket with the specified configuration
 func (h *LocalProvider) CreateBucket(capacity, fillRate int64, dimension string, opts ...tokenbucket.Option) (*tokenbucket.Bucket, error) {
 	cfg := h.CreateBucketConfig(dimension)
 	return tokenbucket.NewBucket(capacity, fillRate, dimension, cfg, opts...)
+}
+
+// CreateLockBackendConfig creates a LockBackendConfig for managing locks
+func (h *LocalProvider) CreateLockBackendConfig() *dynamodbstorage.LockBackendConfig {
+	return createLockBackendConfig(h.client, h.lockTableName)
 }
 
 func (h *LocalProvider) createTokenBucketTable(ctx context.Context) error {

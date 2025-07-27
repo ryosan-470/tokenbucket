@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/ryosan-470/tokenbucket"
 	"github.com/ryosan-470/tokenbucket/benchmark/storage"
 )
@@ -58,8 +59,16 @@ func BenchmarkSingleDimensionConcurrent(b *testing.B) {
 // BenchmarkSingleDimensionWithLock tests performance with distributed locking
 func BenchmarkSingleDimensionWithLock(b *testing.B) {
 	provider := storage.BenchmarkSetup(b)
-	
-	bucket, err := provider.CreateBucket(1000, 100, "bench-with-lock")
+
+	bucket, err := provider.CreateBucket(
+		1000,
+		100,
+		"bench-with-lock",
+		tokenbucket.WithLockBackend(
+			provider.CreateLockBackendConfig(),
+			uuid.NewString(),
+		),
+	)
 	if err != nil {
 		b.Fatalf("Failed to create bucket: %v", err)
 	}
@@ -78,8 +87,8 @@ func BenchmarkSingleDimensionWithLock(b *testing.B) {
 // BenchmarkSingleDimensionWithoutLock tests performance without distributed locking
 func BenchmarkSingleDimensionWithoutLock(b *testing.B) {
 	provider := storage.BenchmarkSetup(b)
-	
-	bucket, err := provider.CreateBucket(1000, 100, "bench-without-lock", tokenbucket.WithoutLock())
+
+	bucket, err := provider.CreateBucket(1000, 100, "bench-without-lock")
 	if err != nil {
 		b.Fatalf("Failed to create bucket: %v", err)
 	}
@@ -133,7 +142,7 @@ func BenchmarkMultiDimensionDistributed(b *testing.B) {
 // BenchmarkLockComparison directly compares lock vs no-lock performance
 func BenchmarkLockComparison(b *testing.B) {
 	scenarios := []struct {
-		name    string
+		name     string
 		withLock bool
 	}{
 		{"WithLock", true},
@@ -148,9 +157,17 @@ func BenchmarkLockComparison(b *testing.B) {
 			var err error
 			
 			if scenario.withLock {
-				bucket, err = provider.CreateBucket(500, 50, fmt.Sprintf("bench-lock-comp-%s", scenario.name))
+				bucket, err = provider.CreateBucket(
+					500,
+					50,
+					fmt.Sprintf("bench-lock-comp-%s", scenario.name),
+					tokenbucket.WithLockBackend(
+						provider.CreateLockBackendConfig(),
+						uuid.NewString(),
+					),
+				)
 			} else {
-				bucket, err = provider.CreateBucket(500, 50, fmt.Sprintf("bench-lock-comp-%s", scenario.name), tokenbucket.WithoutLock())
+				bucket, err = provider.CreateBucket(500, 50, fmt.Sprintf("bench-lock-comp-%s", scenario.name))
 			}
 			
 			if err != nil {
