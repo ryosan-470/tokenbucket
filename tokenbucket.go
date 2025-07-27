@@ -146,13 +146,9 @@ func (b *Bucket) Get(ctx context.Context) (*Bucket, error) {
 	}, nil
 }
 
-func CalculateFillRate(fillRate int64) time.Duration {
+func calculateFillRate(fillRate int64) time.Duration {
 	if fillRate <= 0 {
 		return 0
 	}
 	return time.Second / time.Duration(fillRate)
-}
-
-func calculateFillRate(fillRate int64) time.Duration {
-	return CalculateFillRate(fillRate)
 }
