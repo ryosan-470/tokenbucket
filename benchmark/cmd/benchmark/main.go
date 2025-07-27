@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/ryosan-470/tokenbucket"
 	"github.com/ryosan-470/tokenbucket/benchmark"
 	"github.com/ryosan-470/tokenbucket/benchmark/storage"
@@ -97,8 +98,9 @@ func parseFlags() Config {
 
 func runSingleDimensionTest(provider storage.Provider, cfg Config) (benchmark.Report, error) {
 	var opts []tokenbucket.Option
-	if !cfg.WithLock {
-		opts = append(opts, tokenbucket.WithoutLock())
+	if cfg.WithLock {
+		lockBackendCfg := provider.CreateLockBackendConfig()
+		opts = append(opts, tokenbucket.WithLockBackend(lockBackendCfg, uuid.NewString()))
 	}
 
 	bucket, err := provider.CreateBucket(cfg.Capacity, cfg.FillRate, "load-test-single", opts...)
@@ -115,7 +117,8 @@ func runSingleDimensionTest(provider storage.Provider, cfg Config) (benchmark.Re
 func runMultiDimensionTest(provider storage.Provider, cfg Config) (benchmark.Report, error) {
 	var opts []tokenbucket.Option
 	if !cfg.WithLock {
-		opts = append(opts, tokenbucket.WithoutLock())
+		lockBackendCfg := provider.CreateLockBackendConfig()
+		opts = append(opts, tokenbucket.WithLockBackend(lockBackendCfg, uuid.NewString()))
 	}
 
 	// Create buckets for each dimension
@@ -149,7 +152,8 @@ func runLockComparisonTest(provider storage.Provider, cfg Config) (benchmark.Rep
 	}
 
 	log.Println("Running without lock...")
-	bucketWithoutLock, err := provider.CreateBucket(cfg.Capacity, cfg.FillRate, "load-test-without-lock", tokenbucket.WithoutLock())
+	lockBackendCfg := provider.CreateLockBackendConfig()
+	bucketWithoutLock, err := provider.CreateBucket(cfg.Capacity, cfg.FillRate, "load-test-without-lock", tokenbucket.WithLockBackend(lockBackendCfg, uuid.NewString()))
 	if err != nil {
 		return benchmark.Report{}, fmt.Errorf("failed to create bucket without lock: %w", err)
 	}
