@@ -160,9 +160,10 @@ func runLoadTest(bucket *tokenbucket.Bucket, metrics *benchmark.Metrics, cfg Con
 			select {
 			case <-ticker.C:
 				snapshot := metrics.TakeSnapshot()
-				log.Printf("Snapshot: %d ops, %.2f ops/sec, Success: %d, Failed: %d",
-					snapshot.TotalOperations, snapshot.OpsPerSecond,
-					snapshot.SuccessfulTakes, snapshot.FailedTakes)
+				log.Printf(
+					"Snapshot: %d ops, %.2f ops/sec, Avg Latency: %.2fms, Success: %d, Failed: %d",
+					snapshot.TotalOperations, snapshot.OpsPerSecond, snapshot.AvgLatencyMs, snapshot.SuccessfulTakes, snapshot.FailedTakes,
+				)
 			case <-ctx.Done():
 				return
 			}
@@ -217,9 +218,10 @@ func runMultiDimensionalLoadTest(buckets []*tokenbucket.Bucket, metrics *benchma
 			select {
 			case <-ticker.C:
 				snapshot := metrics.TakeSnapshot()
-				log.Printf("Multi-dimension Snapshot: %d ops, %.2f ops/sec, Success: %d, Failed: %d",
-					snapshot.TotalOperations, snapshot.OpsPerSecond,
-					snapshot.SuccessfulTakes, snapshot.FailedTakes)
+				log.Printf(
+					"Snapshot: %d ops, %.2f ops/sec, Avg Latency: %.2fms, Success: %d, Failed: %d",
+					snapshot.TotalOperations, snapshot.OpsPerSecond, snapshot.AvgLatencyMs, snapshot.SuccessfulTakes, snapshot.FailedTakes,
+				)
 			case <-ctx.Done():
 				return
 			}
