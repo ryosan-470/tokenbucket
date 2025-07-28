@@ -2,18 +2,6 @@
 
 This directory contains benchmark tests for performance evaluation of the TokenBucket library.
 
-## Structure
-
-- `storage/` - Backend storage configurations
-  - `storage.go` - Common storage interface
-  - `local.go` - DynamoDB Local setup via testcontainers
-  - `aws.go` - AWS DynamoDB setup and configuration
-- `metrics.go` - Metrics collection and analysis
-- `tokenbucket_single_dimension_test.go` - Single dimension benchmark tests
-- `tokenbucket_multiple_dimension_test.go` - Multiple dimension benchmark tests
-- `cmd/benchmark/main.go` - CLI for sustained load tests
-- `results/` - Benchmark results storage directory
-
 ## Backend Support
 
 The benchmark suite supports two DynamoDB backends:
@@ -30,18 +18,35 @@ The benchmark suite supports two DynamoDB backends:
 - Configuration: Capacity=1000, FillRate=100 tokens/second
 - Parallelism: 10 goroutines
 
-### 2. Multiple Dimension Tests  
+### 2. Multiple Dimension Tests
 - **Memory Backend**: Performance across 10 dimensions using in-memory backend
 - **Without Lock**: Multi-dimension testing without distributed locking
 - **With Lock**: Multi-dimension testing with distributed locking
-- Configuration per dimension: Capacity=200, FillRate=20 tokens/second
+- Configuration per dimension: Capacity=1000, FillRate=100 tokens/second
 - Round-robin token acquisition across dimensions
-- Parallelism: 20 goroutines (2 per dimension)
+- Parallelism: 10 goroutines
 
-### 3. 60-Second Sustained Load Test (CLI)
-- Time-series metrics collection
-- Analysis of throughput and latency variations
-- Configurable scenarios and backends
+### 3. CLI Load Testing Tool (cmd/benchmark)
+The command-line tool provides comprehensive performance testing with real-time metrics:
+
+**Available Scenarios:**
+- `single`: Single dimension high-frequency token acquisition
+- `multi`: Multiple dimension round-robin testing
+
+**Backend Types:**
+- `custom`: Default custom backend implementation
+- `memory`: In-memory backend for testing
+- `limiters`: mennanov/limiters backend with race checking
+
+**Provider Types:**
+- `local`: DynamoDB Local via testcontainers (default)
+- `aws`: AWS DynamoDB with AWS profile authentication
+
+**Features:**
+- Real-time metrics with 1-second snapshots
+- Configurable concurrency, duration, and bucket parameters
+- Distributed locking support
+- Report generation and optional file output
 
 ## Execution
 
@@ -56,7 +61,7 @@ make benchmark
 # Single dimension benchmarks
 go test -bench=BenchmarkSingleDimension -benchtime=60s
 
-# Multiple dimension benchmarks  
+# Multiple dimension benchmarks
 go test -bench=BenchmarkMultipleDimension -benchtime=30s
 
 # Memory backend tests
@@ -73,40 +78,80 @@ go test -bench=. -cpuprofile=cpu.prof
 go test -bench=. -memprofile=mem.prof
 ```
 
-### Sustained Load Tests
+### CLI Load Testing Tool
 
-#### DynamoDB Local (Default)
+#### Basic Usage
 ```bash
 cd cmd/benchmark
 
-# Single dimension high load test
-go run main.go -scenario=single -concurrency=50 -duration=60s
+# Single dimension test (matches BenchmarkSingleDimension configuration)
+go run main.go -scenario=single -concurrency=10 -capacity=1000 -fill-rate=100 -duration=60s
 
-# Multi dimension distributed test
-go run main.go -scenario=multi -dimensions=30 -concurrency=60 -duration=60s
+# Multi dimension test (10 dimensions with round-robin)
+go run main.go -scenario=multi -dimensions=10 -concurrency=10 -capacity=1000 -fill-rate=100 -duration=60s
 
-# Lock vs no-lock performance comparison
-go run main.go -scenario=lock-comparison -concurrency=20 -duration=60s
+# Memory backend test
+go run main.go -scenario=single -backend-type=memory -concurrency=10 -duration=60s
 
-# Test with custom configuration
-go run main.go -scenario=single -capacity=500 -fill-rate=50 -concurrency=25 -duration=120s
+# Test with distributed locking
+go run main.go -scenario=single -with-lock -concurrency=10 -duration=60s
 ```
 
-#### AWS DynamoDB
+#### Backend Configurations
 ```bash
-cd cmd/benchmark
+# Custom backend (default)
+go run main.go -scenario=single -backend-type=custom -concurrency=10
 
-# Set AWS profile (required for AWS backend)
+# Limiters backend with race checking
+go run main.go -scenario=single -backend-type=limiters -race-check -concurrency=10
+
+# Memory backend for single-node testing
+go run main.go -scenario=single -backend-type=memory -concurrency=10
+```
+
+#### Provider Types
+```bash
+# Local DynamoDB (default)
+go run main.go -provider-type=local -scenario=single
+
+# AWS DynamoDB (requires AWS_PROFILE)
 export AWS_PROFILE=your-aws-profile
+go run main.go -provider-type=aws -scenario=single
 
-# Single dimension test with AWS backend
-go run main.go -backend=aws -scenario=single -concurrency=50 -duration=60s
+# Save results to file
+go run main.go -scenario=single -output=results.json
+```
 
-# Multi dimension test with AWS backend
-go run main.go -backend=aws -scenario=multi -dimensions=30 -concurrency=60 -duration=60s
+#### Complete Example Commands
+```bash
+# High-load single dimension test matching benchmark configuration
+go run main.go \
+  -scenario=single \
+  -concurrency=10 \
+  -capacity=1000 \
+  -fill-rate=100 \
+  -backend-type=custom \
+  -duration=60s
 
-# Lock comparison test on AWS
-go run main.go -backend=aws -scenario=lock-comparison -concurrency=20 -duration=60s
+# Multi-dimension distributed test with locking
+go run main.go \
+  -scenario=multi \
+  -dimensions=10 \
+  -concurrency=20 \
+  -capacity=200 \
+  -fill-rate=20 \
+  -with-lock \
+  -duration=60s
+
+# AWS backend performance test
+export AWS_PROFILE=your-profile
+go run main.go \
+  -provider-type=aws \
+  -scenario=single \
+  -backend-type=limiters \
+  -race-check \
+  -concurrency=10 \
+  -duration=120s
 ```
 
 **Note**: The AWS backend will automatically create the required DynamoDB tables with fixed names if they don't exist:
