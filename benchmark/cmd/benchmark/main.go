@@ -130,7 +130,7 @@ func runMultiDimensionTest(provider storage.Provider, cfg Config) (benchmark.Rep
 		if err != nil {
 			return benchmark.Report{}, err
 		}
-		bucket, err := provider.CreateBucket(cfg.Capacity/5, cfg.FillRate/5, fmt.Sprintf("load-test-multi-%d", i), opts...)
+		bucket, err := provider.CreateBucket(cfg.Capacity, cfg.FillRate, fmt.Sprintf("load-test-multi-%d", i), opts...)
 		if err != nil {
 			return benchmark.Report{}, fmt.Errorf("failed to create bucket %d: %w", i, err)
 		}
@@ -161,7 +161,7 @@ func runLoadTest(bucket *tokenbucket.Bucket, metrics *benchmark.Metrics, cfg Con
 			case <-ticker.C:
 				snapshot := metrics.TakeSnapshot()
 				log.Printf(
-					"Snapshot: %d ops, %.2f ops/sec, Avg Latency: %.2fms, Success: %d, Failed: %d",
+					"Snapshot: %7d ops, %8.2f ops/sec, Avg Latency: %7.2fms, Success: %7d, Failed: %7d",
 					snapshot.TotalOperations, snapshot.OpsPerSecond, snapshot.AvgLatencyMs, snapshot.SuccessfulTakes, snapshot.FailedTakes,
 				)
 			case <-ctx.Done():
@@ -219,7 +219,7 @@ func runMultiDimensionalLoadTest(buckets []*tokenbucket.Bucket, metrics *benchma
 			case <-ticker.C:
 				snapshot := metrics.TakeSnapshot()
 				log.Printf(
-					"Snapshot: %d ops, %.2f ops/sec, Avg Latency: %.2fms, Success: %d, Failed: %d",
+					"Snapshot: %7d ops, %8.2f ops/sec, Avg Latency: %7.2fms, Success: %7d, Failed: %7d",
 					snapshot.TotalOperations, snapshot.OpsPerSecond, snapshot.AvgLatencyMs, snapshot.SuccessfulTakes, snapshot.FailedTakes,
 				)
 			case <-ctx.Done():
