@@ -11,15 +11,23 @@ This is a Go library implementing a token bucket algorithm for rate limiting, us
 The codebase is organized as follows:
 
 - **Root package (`tokenbucket`)**: Main interface and implementation
-  - `TokenBucket` interface with `Take()` and `Get()` methods
-  - `Bucket` struct containing capacity, fill rate, available tokens, and backend
+  - `tokenbucket.go`: `TokenBucket` interface with `Take()` and `Get()` methods and `Bucket` struct implementation
+  - `tokenbucket_test.go`: Unit tests for the main tokenbucket functionality
+  - `main_test.go`: Test utilities for the root package
   - Uses the `github.com/mennanov/limiters` library as the underlying implementation
   - `errors.go`: Custom error definitions for the library
 
+- **Internal utilities (`internal/testutils/`)**: Testing utilities
+  - `dynamodb.go`: DynamoDB test setup and helper functions
+  - `time.go`: Time-related test utilities
+
 - **Storage layer (`storage/dynamodb/`)**: DynamoDB-specific implementations
+  - `backend.go`: DynamoDB backend implementation for token bucket storage
+  - `backend_test.go`: Tests for DynamoDB backend functionality
   - `config.go`: Backend configuration for DynamoDB token bucket storage and lock settings
   - `lock.go`: Distributed locking implementation using DynamoDB with TTL and backoff
   - `lock_test.go`: Comprehensive test suite for lock functionality
+  - `main_test.go`: Test setup and teardown utilities
 
 - **Benchmark package (`benchmark/`)**: Performance testing and metrics
   - `cmd/benchmark/main.go`: Command-line benchmarking tool
@@ -28,7 +36,8 @@ The codebase is organized as follows:
     - `aws.go`: AWS DynamoDB storage for benchmarks
     - `local.go`: Local/in-memory storage for benchmarks
     - `storage.go`: Common storage interfaces
-  - `tokenbucket_test.go`: Benchmark tests
+  - `tokenbucket_single_dimension_test.go`: Single dimension benchmark tests
+  - `tokenbucket_multiple_dimension_test.go`: Multiple dimension benchmark tests
 
 ## Key Design Patterns
 
@@ -48,6 +57,8 @@ This is a standard Go module. Common commands:
 go build ./...
 
 # Run tests
+make test
+# or
 go test ./...
 
 # Run tests with verbose output
@@ -57,7 +68,9 @@ go test -v ./...
 go test -v ./storage/dynamodb/ -run TestLock_BasicLockUnlock
 
 # Run benchmark tests
-go test -bench=. -benchmem
+make benchmark
+# or
+go test -bench=. -benchmem ./benchmark
 
 # Get dependencies
 go mod tidy
@@ -86,7 +99,12 @@ The project includes comprehensive test coverage:
 - Proper wait strategies for container startup and table readiness
 
 ### Benchmark Suite
-- Performance testing across different storage backends
+- **Single Dimension Tests** (`tokenbucket_single_dimension_test.go`): Performance testing with high load on a single dimension
+  - Memory backend benchmark
+  - Tests with and without distributed locking
+- **Multiple Dimension Tests** (`tokenbucket_multiple_dimension_test.go`): Performance testing across multiple dimensions (10 dimensions)
+  - Round-robin token acquisition across dimensions
+  - Memory backend and distributed scenarios
 - Metrics collection for throughput and latency analysis
 - Comparative testing between local and DynamoDB implementations
 
@@ -145,6 +163,7 @@ Typical usage involves:
 - `WithClock()`: Custom clock implementation for testing
 - `WithLogger()`: Custom logger for debugging
 - `WithoutLock()`: Disable distributed locking (for single-node deployments)
+- `WithMemoryBackend()`: Use in-memory backend instead of DynamoDB (for testing and single-node scenarios)
 
 ## Localization Guidelines
 
