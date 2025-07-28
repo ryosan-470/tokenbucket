@@ -9,7 +9,8 @@ This directory contains benchmark tests for performance evaluation of the TokenB
   - `local.go` - DynamoDB Local setup via testcontainers
   - `aws.go` - AWS DynamoDB setup and configuration
 - `metrics.go` - Metrics collection and analysis
-- `tokenbucket_test.go` - Go standard benchmark tests
+- `tokenbucket_single_dimension_test.go` - Single dimension benchmark tests
+- `tokenbucket_multiple_dimension_test.go` - Multiple dimension benchmark tests
 - `cmd/benchmark/main.go` - CLI for sustained load tests
 - `results/` - Benchmark results storage directory
 
@@ -22,22 +23,25 @@ The benchmark suite supports two DynamoDB backends:
 
 ## Benchmark Scenarios
 
-### 1. Single Dimension High Load Test
-- High-frequency token acquisition against a single dimension
-- Concurrency levels: 1, 10, 50, 100 goroutines
-- Configuration: Capacity=1000, FillRate=100
+### 1. Single Dimension Tests
+- **Memory Backend**: High-frequency token acquisition using in-memory backend
+- **Without Lock**: Performance testing without distributed locking
+- **With Lock**: Performance testing with distributed locking enabled
+- Configuration: Capacity=1000, FillRate=100 tokens/second
+- Parallelism: 10 goroutines
 
-### 2. Multi Dimension Distributed Load Test
-- Distributed token acquisition across multiple dimensions (10-50)
-- Each dimension: Capacity=100, FillRate=10
-- Token acquisition at moderate intervals
+### 2. Multiple Dimension Tests  
+- **Memory Backend**: Performance across 10 dimensions using in-memory backend
+- **Without Lock**: Multi-dimension testing without distributed locking
+- **With Lock**: Multi-dimension testing with distributed locking
+- Configuration per dimension: Capacity=200, FillRate=20 tokens/second
+- Round-robin token acquisition across dimensions
+- Parallelism: 20 goroutines (2 per dimension)
 
-### 3. Lock vs No-Lock Comparison Test
-- Performance comparison between WithLock/WithoutLock under identical conditions
-
-### 4. 60-Second Sustained Load Test
+### 3. 60-Second Sustained Load Test (CLI)
 - Time-series metrics collection
 - Analysis of throughput and latency variations
+- Configurable scenarios and backends
 
 ## Execution
 
@@ -46,30 +50,27 @@ The benchmark suite supports two DynamoDB backends:
 # Run all benchmarks
 go test -bench=. -benchtime=30s
 
-# Run specific benchmark
-go test -bench=BenchmarkSingleDimensionSequential -benchtime=60s
+# Run using Makefile
+make benchmark
+
+# Single dimension benchmarks
+go test -bench=BenchmarkSingleDimension -benchtime=60s
+
+# Multiple dimension benchmarks  
+go test -bench=BenchmarkMultipleDimension -benchtime=30s
+
+# Memory backend tests
+go test -bench=WithMemoryBackend -benchtime=30s
+
+# Lock vs no-lock comparison
+go test -bench=WithoutLock -benchtime=30s
+go test -bench=WithLock -benchtime=30s
 
 # Run with CPU profiling
 go test -bench=. -cpuprofile=cpu.prof
 
-# Performance measurement by concurrency level
-go test -bench=BenchmarkSingleDimensionConcurrent -benchtime=60s
-
-# Multi-dimension distributed tests
-go test -bench=BenchmarkMultiDimensionDistributed -benchtime=30s
-
-# Lock vs no-lock comparison
-go test -bench=BenchmarkLockComparison -benchtime=30s
-
-# With/without lock individual tests
-go test -bench=BenchmarkSingleDimensionWithLock -benchtime=30s
-go test -bench=BenchmarkSingleDimensionWithoutLock -benchtime=30s
-
-# Benchmark with detailed metrics
-go test -bench=BenchmarkWithMetrics -benchtime=30s -v
-
-# Rate-limited scenario testing
-go test -bench=BenchmarkRateLimitedScenario -benchtime=30s
+# Benchmark with memory profiling
+go test -bench=. -memprofile=mem.prof
 ```
 
 ### Sustained Load Tests
@@ -110,7 +111,7 @@ go run main.go -backend=aws -scenario=lock-comparison -concurrency=20 -duration=
 
 **Note**: The AWS backend will automatically create the required DynamoDB tables with fixed names if they don't exist:
 - Bucket table: `tokenbucket-benchmark-bucket` (PK: String, SK: String, TTL: `_TTL`)
-- Lock table: `tokenbucket-benchmark-lock` (LockID: String, TTL: `TTL`)
+- Lock table: `tokenbucket-benchmark-lock` (LockID: String, TTL: `_TTL`)
 
 Both tables are created with Pay-Per-Request billing mode for cost efficiency.
 
@@ -123,7 +124,8 @@ Both tables are created with Pay-Per-Request billing mode for cost efficiency.
 
 ## Result Interpretation
 
-- **Single Dimension**: Measurement of maximum throughput and scalability
-- **Multi Dimension**: Performance evaluation under realistic usage patterns
-- **Lock Comparison**: Selection criteria based on distributed coordination requirements
-- **Sustained Test**: Stability confirmation during long-term operation
+- **Single Dimension**: Measurement of maximum throughput with high-frequency access patterns
+- **Multiple Dimension**: Performance evaluation with distributed load across multiple buckets
+- **Memory vs DynamoDB**: Backend performance comparison for different deployment scenarios
+- **Lock vs No-Lock**: Trade-offs between consistency and performance
+- **Sustained Test**: Long-term stability and performance characteristics
