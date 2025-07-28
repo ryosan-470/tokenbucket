@@ -80,7 +80,7 @@ func TestTokenBucket(t *testing.T) {
 				capacity,
 				fillRate,
 				dimension,
-				bucketCfg,
+				nil,
 				tokenbucket.WithMemoryBackend(),
 			)
 			require.NoError(t, err)
@@ -123,13 +123,6 @@ func TestTokenBucket(t *testing.T) {
 			assert.Equal(t, capacity, bucket.Capacity)
 			assert.Equal(t, int64(0), bucket.FillRate)
 			assert.Equal(t, dimension, bucket.Dimension)
-		})
-
-		t.Run("InvalidBackendConfig", func(t *testing.T) {
-			dimension := uuid.NewString()
-			bucket, err := tokenbucket.NewBucket(capacity, fillRate, dimension, nil)
-			assert.Error(t, err)
-			assert.Nil(t, bucket)
 		})
 	})
 

@@ -75,10 +75,6 @@ func WithMemoryBackend() Option {
 }
 
 func NewBucket(capacity, fillRate int64, dimension string, cfg *dynamodb.BucketBackendConfig, opts ...Option) (*Bucket, error) {
-	if cfg == nil {
-		return nil, ErrInitializedBucketFailed
-	}
-
 	opt := &options{
 		clock:  limiters.NewSystemClock(),
 		logger: &limiters.StdLogger{},
