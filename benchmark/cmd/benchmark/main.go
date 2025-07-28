@@ -16,15 +16,15 @@ import (
 )
 
 type Config struct {
-	Scenario    string
-	Concurrency int
-	Duration    time.Duration
-	Capacity    int64
-	FillRate    int64
-	Dimensions  int
-	WithLock    bool
-	OutputFile  string
-	Backend     string
+	Scenario     string
+	Concurrency  int
+	Duration     time.Duration
+	Capacity     int64
+	FillRate     int64
+	Dimensions   int
+	WithLock     bool
+	OutputFile   string
+	ProviderType string
 }
 
 func main() {
@@ -85,9 +85,9 @@ func parseFlags() Config {
 	flag.Int64Var(&cfg.Capacity, "capacity", 1000, "Token bucket capacity")
 	flag.Int64Var(&cfg.FillRate, "fill-rate", 100, "Token fill rate per second")
 	flag.IntVar(&cfg.Dimensions, "dimensions", 10, "Number of dimensions for multi-dimension test")
-	flag.BoolVar(&cfg.WithLock, "with-lock", true, "Use distributed locking")
+	flag.BoolVar(&cfg.WithLock, "with-lock", false, "Use distributed locking")
 	flag.StringVar(&cfg.OutputFile, "output", "", "Output file for results (optional)")
-	flag.StringVar(&cfg.Backend, "backend", "local", "Backend type (local, aws)")
+	flag.StringVar(&cfg.ProviderType, "provider-type", "local", "Provider type (local, aws)")
 
 	flag.Parse()
 
@@ -284,12 +284,12 @@ func saveReport(_ benchmark.Report, cfg Config) error {
 
 // getProvider returns the appropriate storage provider based on configuration
 func getProvider(cfg Config) (storage.Provider, error) {
-	switch cfg.Backend {
+	switch cfg.ProviderType {
 	case "local":
 		return storage.GetLocalProvider(), nil
 	case "aws":
 		return storage.GetAWSProvider(), nil
 	default:
-		return nil, fmt.Errorf("unknown backend: %s", cfg.Backend)
+		return nil, fmt.Errorf("unknown provider: %s", cfg.ProviderType)
 	}
 }
