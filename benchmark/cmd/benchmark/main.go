@@ -23,8 +23,12 @@ type Config struct {
 	FillRate     int64
 	Dimensions   int
 	WithLock     bool
+	BackendType  string
+	RaceCheck    bool
 	OutputFile   string
 	ProviderType string
+
+	dimension string
 }
 
 func main() {
@@ -86,6 +90,8 @@ func parseFlags() Config {
 	flag.Int64Var(&cfg.FillRate, "fill-rate", 100, "Token fill rate per second")
 	flag.IntVar(&cfg.Dimensions, "dimensions", 10, "Number of dimensions for multi-dimension test")
 	flag.BoolVar(&cfg.WithLock, "with-lock", false, "Use distributed locking")
+	flag.StringVar(&cfg.BackendType, "backend-type", "custom", "Backend type ( custom, limiters, memory)")
+	flag.BoolVar(&cfg.RaceCheck, "race-check", false, "Enable race checking when using limiters backend")
 	flag.StringVar(&cfg.OutputFile, "output", "", "Output file for results (optional)")
 	flag.StringVar(&cfg.ProviderType, "provider-type", "local", "Provider type (local, aws)")
 
@@ -95,13 +101,15 @@ func parseFlags() Config {
 }
 
 func runSingleDimensionTest(provider storage.Provider, cfg Config) (benchmark.Report, error) {
-	var opts []tokenbucket.Option
-	if cfg.WithLock {
-		lockBackendCfg := provider.CreateLockBackendConfig()
-		opts = append(opts, tokenbucket.WithLockBackend(lockBackendCfg, uuid.NewString()))
+	dimension := "load-test-single"
+	cfg.dimension = dimension
+
+	opts, err := getBackendOptions(cfg, provider)
+	if err != nil {
+		return benchmark.Report{}, err
 	}
 
-	bucket, err := provider.CreateBucket(cfg.Capacity, cfg.FillRate, "load-test-single", opts...)
+	bucket, err := provider.CreateBucket(cfg.Capacity, cfg.FillRate, dimension, opts...)
 	if err != nil {
 		return benchmark.Report{}, fmt.Errorf("failed to create bucket: %w", err)
 	}
@@ -113,15 +121,15 @@ func runSingleDimensionTest(provider storage.Provider, cfg Config) (benchmark.Re
 }
 
 func runMultiDimensionTest(provider storage.Provider, cfg Config) (benchmark.Report, error) {
-	var opts []tokenbucket.Option
-	if cfg.WithLock {
-		lockBackendCfg := provider.CreateLockBackendConfig()
-		opts = append(opts, tokenbucket.WithLockBackend(lockBackendCfg, uuid.NewString()))
-	}
-
 	// Create buckets for each dimension
 	buckets := make([]*tokenbucket.Bucket, cfg.Dimensions)
 	for i := 0; i < cfg.Dimensions; i++ {
+		dimension := fmt.Sprintf("load-test-multi-%d", i)
+		cfg.dimension = dimension
+		opts, err := getBackendOptions(cfg, provider)
+		if err != nil {
+			return benchmark.Report{}, err
+		}
 		bucket, err := provider.CreateBucket(cfg.Capacity/5, cfg.FillRate/5, fmt.Sprintf("load-test-multi-%d", i), opts...)
 		if err != nil {
 			return benchmark.Report{}, fmt.Errorf("failed to create bucket %d: %w", i, err)
@@ -136,7 +144,7 @@ func runMultiDimensionTest(provider storage.Provider, cfg Config) (benchmark.Rep
 }
 
 func runLoadTest(bucket *tokenbucket.Bucket, metrics *benchmark.Metrics, cfg Config) (benchmark.Report, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), cfg.Duration)
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.Duration+1*time.Minute)
 	defer cancel()
 
 	var wg sync.WaitGroup
@@ -192,7 +200,7 @@ func runLoadTest(bucket *tokenbucket.Bucket, metrics *benchmark.Metrics, cfg Con
 }
 
 func runMultiDimensionalLoadTest(buckets []*tokenbucket.Bucket, metrics *benchmark.Metrics, cfg Config) (benchmark.Report, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), cfg.Duration)
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.Duration+1*time.Minute)
 	defer cancel()
 
 	var wg sync.WaitGroup
@@ -258,6 +266,9 @@ func printReport(report benchmark.Report, cfg Config) {
 	fmt.Printf("Concurrency: %d\n", cfg.Concurrency)
 	fmt.Printf("Duration: %v\n", cfg.Duration)
 	fmt.Printf("With Lock: %v\n", cfg.WithLock)
+	fmt.Printf("Backend Type: %s\n", cfg.BackendType)
+	fmt.Printf("Race Check: %v\n", cfg.RaceCheck)
+
 	fmt.Printf("\n")
 
 	fmt.Printf("Total Operations: %d\n", report.TotalOperations)
@@ -292,4 +303,27 @@ func getProvider(cfg Config) (storage.Provider, error) {
 	default:
 		return nil, fmt.Errorf("unknown provider: %s", cfg.ProviderType)
 	}
+}
+
+func getBackendOptions(cfg Config, provider storage.Provider) ([]tokenbucket.Option, error) {
+	opts := []tokenbucket.Option{}
+
+	switch cfg.BackendType {
+	case "custom":
+		// do nothing, use default custom backend
+	case "memory":
+		opts = append(opts, tokenbucket.WithMemoryBackend())
+	case "limiters":
+		backendCfg := provider.CreateBucketConfig(cfg.dimension)
+		opts = append(opts, tokenbucket.WithLimitersBackend(backendCfg, cfg.dimension, cfg.RaceCheck))
+	default:
+		return nil, fmt.Errorf("unknown backend type: %s", cfg.BackendType)
+	}
+
+	if cfg.WithLock {
+		lockBackendCfg := provider.CreateLockBackendConfig()
+		opts = append(opts, tokenbucket.WithLockBackend(lockBackendCfg, uuid.NewString()))
+	}
+
+	return opts, nil
 }
