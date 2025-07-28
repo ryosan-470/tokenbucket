@@ -13,7 +13,7 @@ The codebase is organized as follows:
 - **Root package (`tokenbucket`)**: Main interface and implementation
   - `tokenbucket.go`: `TokenBucket` interface with `Take()` and `Get()` methods and `Bucket` struct implementation
   - `tokenbucket_test.go`: Unit tests for the main tokenbucket functionality
-  - `main_test.go`: Test utilities for the root package
+  - `main_test.go`: Test utilities and setup for the root package
   - Uses the `github.com/mennanov/limiters` library as the underlying implementation
   - `errors.go`: Custom error definitions for the library
 
@@ -72,6 +72,10 @@ make benchmark
 # or
 go test -bench=. -benchmem ./benchmark
 
+# Run CLI benchmark tool
+cd benchmark/cmd/benchmark
+go run main.go -scenario=single -concurrency=10 -duration=60s
+
 # Get dependencies
 go mod tidy
 
@@ -102,9 +106,16 @@ The project includes comprehensive test coverage:
 - **Single Dimension Tests** (`tokenbucket_single_dimension_test.go`): Performance testing with high load on a single dimension
   - Memory backend benchmark
   - Tests with and without distributed locking
+  - Configuration: Capacity=1000, FillRate=100 tokens/second, 10 goroutines
 - **Multiple Dimension Tests** (`tokenbucket_multiple_dimension_test.go`): Performance testing across multiple dimensions (10 dimensions)
   - Round-robin token acquisition across dimensions
   - Memory backend and distributed scenarios
+  - Configuration per dimension: Capacity=1000, FillRate=100 tokens/second, 10 goroutines
+- **CLI Benchmark Tool** (`cmd/benchmark/main.go`): Command-line tool for sustained load testing
+  - Real-time metrics with 1-second snapshots
+  - Multiple scenarios (single, multi) and backend types (custom, memory, limiters)
+  - Provider support for local DynamoDB and AWS DynamoDB
+  - Report generation and optional file output
 - Metrics collection for throughput and latency analysis
 - Comparative testing between local and DynamoDB implementations
 

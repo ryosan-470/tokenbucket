@@ -16,15 +16,19 @@ import (
 )
 
 type Config struct {
-	Scenario    string
-	Concurrency int
-	Duration    time.Duration
-	Capacity    int64
-	FillRate    int64
-	Dimensions  int
-	WithLock    bool
-	OutputFile  string
-	Backend     string
+	Scenario     string
+	Concurrency  int
+	Duration     time.Duration
+	Capacity     int64
+	FillRate     int64
+	Dimensions   int
+	WithLock     bool
+	BackendType  string
+	RaceCheck    bool
+	OutputFile   string
+	ProviderType string
+
+	dimension string
 }
 
 func main() {
@@ -57,8 +61,6 @@ func main() {
 		report, err = runSingleDimensionTest(provider, cfg)
 	case "multi":
 		report, err = runMultiDimensionTest(provider, cfg)
-	case "lock-comparison":
-		report, err = runLockComparisonTest(provider, cfg)
 	default:
 		log.Fatalf("Unknown scenario: %s", cfg.Scenario)
 	}
@@ -81,15 +83,17 @@ func main() {
 func parseFlags() Config {
 	var cfg Config
 
-	flag.StringVar(&cfg.Scenario, "scenario", "single", "Benchmark scenario (single, multi, lock-comparison)")
+	flag.StringVar(&cfg.Scenario, "scenario", "single", "Benchmark scenario (single, multi)")
 	flag.IntVar(&cfg.Concurrency, "concurrency", 10, "Number of concurrent goroutines")
 	flag.DurationVar(&cfg.Duration, "duration", 60*time.Second, "Test duration")
 	flag.Int64Var(&cfg.Capacity, "capacity", 1000, "Token bucket capacity")
 	flag.Int64Var(&cfg.FillRate, "fill-rate", 100, "Token fill rate per second")
 	flag.IntVar(&cfg.Dimensions, "dimensions", 10, "Number of dimensions for multi-dimension test")
-	flag.BoolVar(&cfg.WithLock, "with-lock", true, "Use distributed locking")
+	flag.BoolVar(&cfg.WithLock, "with-lock", false, "Use distributed locking")
+	flag.StringVar(&cfg.BackendType, "backend-type", "custom", "Backend type ( custom, limiters, memory)")
+	flag.BoolVar(&cfg.RaceCheck, "race-check", false, "Enable race checking when using limiters backend")
 	flag.StringVar(&cfg.OutputFile, "output", "", "Output file for results (optional)")
-	flag.StringVar(&cfg.Backend, "backend", "local", "Backend type (local, aws)")
+	flag.StringVar(&cfg.ProviderType, "provider-type", "local", "Provider type (local, aws)")
 
 	flag.Parse()
 
@@ -97,13 +101,15 @@ func parseFlags() Config {
 }
 
 func runSingleDimensionTest(provider storage.Provider, cfg Config) (benchmark.Report, error) {
-	var opts []tokenbucket.Option
-	if cfg.WithLock {
-		lockBackendCfg := provider.CreateLockBackendConfig()
-		opts = append(opts, tokenbucket.WithLockBackend(lockBackendCfg, uuid.NewString()))
+	dimension := "load-test-single"
+	cfg.dimension = dimension
+
+	opts, err := getBackendOptions(cfg, provider)
+	if err != nil {
+		return benchmark.Report{}, err
 	}
 
-	bucket, err := provider.CreateBucket(cfg.Capacity, cfg.FillRate, "load-test-single", opts...)
+	bucket, err := provider.CreateBucket(cfg.Capacity, cfg.FillRate, dimension, opts...)
 	if err != nil {
 		return benchmark.Report{}, fmt.Errorf("failed to create bucket: %w", err)
 	}
@@ -115,16 +121,16 @@ func runSingleDimensionTest(provider storage.Provider, cfg Config) (benchmark.Re
 }
 
 func runMultiDimensionTest(provider storage.Provider, cfg Config) (benchmark.Report, error) {
-	var opts []tokenbucket.Option
-	if cfg.WithLock {
-		lockBackendCfg := provider.CreateLockBackendConfig()
-		opts = append(opts, tokenbucket.WithLockBackend(lockBackendCfg, uuid.NewString()))
-	}
-
 	// Create buckets for each dimension
 	buckets := make([]*tokenbucket.Bucket, cfg.Dimensions)
 	for i := 0; i < cfg.Dimensions; i++ {
-		bucket, err := provider.CreateBucket(cfg.Capacity/5, cfg.FillRate/5, fmt.Sprintf("load-test-multi-%d", i), opts...)
+		dimension := fmt.Sprintf("load-test-multi-%d", i)
+		cfg.dimension = dimension
+		opts, err := getBackendOptions(cfg, provider)
+		if err != nil {
+			return benchmark.Report{}, err
+		}
+		bucket, err := provider.CreateBucket(cfg.Capacity, cfg.FillRate, fmt.Sprintf("load-test-multi-%d", i), opts...)
 		if err != nil {
 			return benchmark.Report{}, fmt.Errorf("failed to create bucket %d: %w", i, err)
 		}
@@ -137,49 +143,8 @@ func runMultiDimensionTest(provider storage.Provider, cfg Config) (benchmark.Rep
 	return runMultiDimensionalLoadTest(buckets, metrics, cfg)
 }
 
-func runLockComparisonTest(provider storage.Provider, cfg Config) (benchmark.Report, error) {
-	// Run both with and without lock
-	log.Println("Running with lock...")
-	bucketWithLock, err := provider.CreateBucket(
-		cfg.Capacity,
-		cfg.FillRate,
-		"load-test-with-lock",
-		tokenbucket.WithLockBackend(
-			provider.CreateLockBackendConfig(),
-			uuid.NewString(),
-		),
-	)
-	if err != nil {
-		return benchmark.Report{}, fmt.Errorf("failed to create bucket with lock: %w", err)
-	}
-
-	metricsWithLock := benchmark.NewMetrics()
-	reportWithLock, err := runLoadTest(bucketWithLock, metricsWithLock, cfg)
-	if err != nil {
-		return benchmark.Report{}, fmt.Errorf("failed to run with-lock test: %w", err)
-	}
-
-	log.Println("Running without lock...")
-	bucketWithoutLock, err := provider.CreateBucket(cfg.Capacity, cfg.FillRate, "load-test-without-lock")
-	if err != nil {
-		return benchmark.Report{}, fmt.Errorf("failed to create bucket without lock: %w", err)
-	}
-
-	metricsWithoutLock := benchmark.NewMetrics()
-	reportWithoutLock, err := runLoadTest(bucketWithoutLock, metricsWithoutLock, cfg)
-	if err != nil {
-		return benchmark.Report{}, fmt.Errorf("failed to run without-lock test: %w", err)
-	}
-
-	// Print comparison
-	printLockComparison(reportWithLock, reportWithoutLock)
-
-	// Return the with-lock report as primary result
-	return reportWithLock, nil
-}
-
 func runLoadTest(bucket *tokenbucket.Bucket, metrics *benchmark.Metrics, cfg Config) (benchmark.Report, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), cfg.Duration)
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.Duration+1*time.Minute)
 	defer cancel()
 
 	var wg sync.WaitGroup
@@ -195,9 +160,10 @@ func runLoadTest(bucket *tokenbucket.Bucket, metrics *benchmark.Metrics, cfg Con
 			select {
 			case <-ticker.C:
 				snapshot := metrics.TakeSnapshot()
-				log.Printf("Snapshot: %d ops, %.2f ops/sec, Success: %d, Failed: %d",
-					snapshot.TotalOperations, snapshot.OpsPerSecond,
-					snapshot.SuccessfulTakes, snapshot.FailedTakes)
+				log.Printf(
+					"Snapshot: %7d ops, %8.2f ops/sec, Avg Latency: %7.2fms, Success: %7d, Failed: %7d",
+					snapshot.TotalOperations, snapshot.OpsPerSecond, snapshot.AvgLatencyMs, snapshot.SuccessfulTakes, snapshot.FailedTakes,
+				)
 			case <-ctx.Done():
 				return
 			}
@@ -235,7 +201,7 @@ func runLoadTest(bucket *tokenbucket.Bucket, metrics *benchmark.Metrics, cfg Con
 }
 
 func runMultiDimensionalLoadTest(buckets []*tokenbucket.Bucket, metrics *benchmark.Metrics, cfg Config) (benchmark.Report, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), cfg.Duration)
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.Duration+1*time.Minute)
 	defer cancel()
 
 	var wg sync.WaitGroup
@@ -252,9 +218,10 @@ func runMultiDimensionalLoadTest(buckets []*tokenbucket.Bucket, metrics *benchma
 			select {
 			case <-ticker.C:
 				snapshot := metrics.TakeSnapshot()
-				log.Printf("Multi-dimension Snapshot: %d ops, %.2f ops/sec, Success: %d, Failed: %d",
-					snapshot.TotalOperations, snapshot.OpsPerSecond,
-					snapshot.SuccessfulTakes, snapshot.FailedTakes)
+				log.Printf(
+					"Snapshot: %7d ops, %8.2f ops/sec, Avg Latency: %7.2fms, Success: %7d, Failed: %7d",
+					snapshot.TotalOperations, snapshot.OpsPerSecond, snapshot.AvgLatencyMs, snapshot.SuccessfulTakes, snapshot.FailedTakes,
+				)
 			case <-ctx.Done():
 				return
 			}
@@ -301,6 +268,9 @@ func printReport(report benchmark.Report, cfg Config) {
 	fmt.Printf("Concurrency: %d\n", cfg.Concurrency)
 	fmt.Printf("Duration: %v\n", cfg.Duration)
 	fmt.Printf("With Lock: %v\n", cfg.WithLock)
+	fmt.Printf("Backend Type: %s\n", cfg.BackendType)
+	fmt.Printf("Race Check: %v\n", cfg.RaceCheck)
+
 	fmt.Printf("\n")
 
 	fmt.Printf("Total Operations: %d\n", report.TotalOperations)
@@ -319,24 +289,6 @@ func printReport(report benchmark.Report, cfg Config) {
 	fmt.Printf("  Min:  %v\n", report.LatencyMin)
 }
 
-func printLockComparison(withLock, withoutLock benchmark.Report) {
-	fmt.Printf("\n=== Lock Comparison ===\n")
-	fmt.Printf("%-20s | %-15s | %-15s | %s\n", "Metric", "With Lock", "Without Lock", "Difference")
-	fmt.Printf("%s\n", "--------------------------------------------------------------------------------")
-
-	fmt.Printf("%-20s | %-15.2f | %-15.2f | %.2fx\n",
-		"Ops/Second", withLock.AvgOpsPerSecond, withoutLock.AvgOpsPerSecond,
-		withoutLock.AvgOpsPerSecond/withLock.AvgOpsPerSecond)
-
-	fmt.Printf("%-20s | %-15.2f | %-15.2f | %.2fx\n",
-		"Success Rate (%)", withLock.SuccessRate, withoutLock.SuccessRate,
-		withoutLock.SuccessRate/withLock.SuccessRate)
-
-	fmt.Printf("%-20s | %-15s | %-15s | %.2fx\n",
-		"P95 Latency", withLock.LatencyP95, withoutLock.LatencyP95,
-		float64(withLock.LatencyP95)/float64(withoutLock.LatencyP95))
-}
-
 func saveReport(_ benchmark.Report, cfg Config) error {
 	// TODO: Implement JSON/CSV output
 	log.Printf("Saving report to %s (not implemented yet)", cfg.OutputFile)
@@ -345,12 +297,35 @@ func saveReport(_ benchmark.Report, cfg Config) error {
 
 // getProvider returns the appropriate storage provider based on configuration
 func getProvider(cfg Config) (storage.Provider, error) {
-	switch cfg.Backend {
+	switch cfg.ProviderType {
 	case "local":
 		return storage.GetLocalProvider(), nil
 	case "aws":
 		return storage.GetAWSProvider(), nil
 	default:
-		return nil, fmt.Errorf("unknown backend: %s", cfg.Backend)
+		return nil, fmt.Errorf("unknown provider: %s", cfg.ProviderType)
 	}
+}
+
+func getBackendOptions(cfg Config, provider storage.Provider) ([]tokenbucket.Option, error) {
+	opts := []tokenbucket.Option{}
+
+	switch cfg.BackendType {
+	case "custom":
+		// do nothing, use default custom backend
+	case "memory":
+		opts = append(opts, tokenbucket.WithMemoryBackend())
+	case "limiters":
+		backendCfg := provider.CreateBucketConfig(cfg.dimension)
+		opts = append(opts, tokenbucket.WithLimitersBackend(backendCfg, cfg.dimension, cfg.RaceCheck))
+	default:
+		return nil, fmt.Errorf("unknown backend type: %s", cfg.BackendType)
+	}
+
+	if cfg.WithLock {
+		lockBackendCfg := provider.CreateLockBackendConfig()
+		opts = append(opts, tokenbucket.WithLockBackend(lockBackendCfg, uuid.NewString()))
+	}
+
+	return opts, nil
 }

@@ -14,6 +14,7 @@ type Provider interface {
 	Setup(ctx context.Context) error
 	Cleanup(ctx context.Context) error
 	CreateBucket(capacity, fillRate int64, dimension string, opts ...tokenbucket.Option) (*tokenbucket.Bucket, error)
+	CreateBucketConfig(dimension string) *dynamodbstorage.BucketBackendConfig
 	CreateLockBackendConfig() *dynamodbstorage.LockBackendConfig
 }
 

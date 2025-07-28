@@ -13,6 +13,7 @@ type MetricSnapshot struct {
 	SuccessfulTakes  int64
 	FailedTakes      int64
 	OpsPerSecond     float64
+	AvgLatencyMs     float64  // Average latency per operation in milliseconds
 }
 
 // Metrics collects and analyzes benchmark performance data
@@ -64,12 +65,24 @@ func (m *Metrics) TakeSnapshot() MetricSnapshot {
 		opsPerSec = float64(total) / elapsed
 	}
 	
+	// Calculate average latency in milliseconds
+	var avgLatencyMs float64
+	if len(m.latencies) > 0 {
+		var sum time.Duration
+		for _, lat := range m.latencies {
+			sum += lat
+		}
+		avgLatency := sum / time.Duration(len(m.latencies))
+		avgLatencyMs = float64(avgLatency.Nanoseconds()) / 1e6 // Convert to milliseconds
+	}
+	
 	snapshot := MetricSnapshot{
 		Timestamp:        now,
 		TotalOperations:  total,
 		SuccessfulTakes:  m.successCount,
 		FailedTakes:      m.failureCount,
 		OpsPerSecond:     opsPerSec,
+		AvgLatencyMs:     avgLatencyMs,
 	}
 	
 	m.snapshots = append(m.snapshots, snapshot)
@@ -84,6 +97,7 @@ type Report struct {
 	FailedTakes       int64
 	SuccessRate       float64
 	AvgOpsPerSecond   float64
+	AvgLatencyMs      float64  // Average latency per operation in milliseconds
 	
 	// Latency statistics
 	LatencyMean       time.Duration
@@ -111,6 +125,17 @@ func (m *Metrics) GenerateReport() Report {
 	}
 	
 	avgOps := float64(total) / duration.Seconds()
+	
+	// Calculate average latency in milliseconds
+	var avgLatencyMs float64
+	if len(m.latencies) > 0 {
+		var sum time.Duration
+		for _, lat := range m.latencies {
+			sum += lat
+		}
+		avgLatency := sum / time.Duration(len(m.latencies))
+		avgLatencyMs = float64(avgLatency.Nanoseconds()) / 1e6 // Convert to milliseconds
+	}
 	
 	// Calculate latency percentiles
 	latenciesCopy := make([]time.Duration, len(m.latencies))
@@ -147,6 +172,7 @@ func (m *Metrics) GenerateReport() Report {
 		FailedTakes:     m.failureCount,
 		SuccessRate:     successRate,
 		AvgOpsPerSecond: avgOps,
+		AvgLatencyMs:    avgLatencyMs,
 		
 		LatencyMean: mean,
 		LatencyP50:  p50,
