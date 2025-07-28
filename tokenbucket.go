@@ -68,11 +68,13 @@ func WithLimitersBackend(cfg *dynamodb.BucketBackendConfig, dimension string, en
 	}
 }
 
-func NewBucket(capacity, fillRate int64, dimension string, cfg *dynamodb.BucketBackendConfig, opts ...Option) (*Bucket, error) {
-	if cfg == nil {
-		return nil, ErrInitializedBucketFailed
+func WithMemoryBackend() Option {
+	return func(o *options) {
+		o.backend = limiters.NewTokenBucketInMemory()
 	}
+}
 
+func NewBucket(capacity, fillRate int64, dimension string, cfg *dynamodb.BucketBackendConfig, opts ...Option) (*Bucket, error) {
 	opt := &options{
 		clock:  limiters.NewSystemClock(),
 		logger: &limiters.StdLogger{},
