@@ -1,3 +1,5 @@
+// This test case benchmarks the performance of a single dimension token bucket.
+// The bucket has a capacity of 1000 tokens and a refill rate of 100 tokens per second.
 package benchmark
 
 import (
@@ -9,17 +11,29 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const (
+	capacityForSingleDimension   = 1000
+	refillRateForSingleDimension = 100
+
+	parallels = 10
+)
+
 // BenchmarkSingleDimension_WithMemoryBackend tests the performance of a single dimension token bucket
 func BenchmarkSingleDimension_WithMemoryBackend(b *testing.B) {
 	provider := storage.BenchmarkSetup(b)
 
-	bucket, err := provider.CreateBucket(1000, 100, "bench-with-memory-backend", tokenbucket.WithMemoryBackend())
+	bucket, err := provider.CreateBucket(
+		capacityForSingleDimension,
+		refillRateForSingleDimension,
+		"bench-with-memory-backend",
+		tokenbucket.WithMemoryBackend(),
+	)
 	require.NoError(b, err, "Failed to create bucket: %v", err)
 
 	ctx := context.Background()
 	b.ResetTimer()
 
-	b.SetParallelism(1)
+	b.SetParallelism(parallels)
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			_ = bucket.Take(ctx)
@@ -33,8 +47,8 @@ func BenchmarkSingleDimension_WithoutLock(b *testing.B) {
 	dimension := "bench-without-lock"
 
 	bucket, err := provider.CreateBucket(
-		1000,
-		100,
+		capacityForSingleDimension,
+		refillRateForSingleDimension,
 		dimension,
 		tokenbucket.WithLimitersBackend(provider.CreateBucketConfig(dimension), dimension, false),
 	)
@@ -42,7 +56,7 @@ func BenchmarkSingleDimension_WithoutLock(b *testing.B) {
 
 	ctx := context.Background()
 	b.ResetTimer()
-	b.SetParallelism(1)
+	b.SetParallelism(parallels)
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			bucket.Take(ctx)
@@ -56,8 +70,8 @@ func BenchmarkSingleDimension_WithLock(b *testing.B) {
 	dimension := "bench-with-lock"
 
 	bucket, err := provider.CreateBucket(
-		1000,
-		100,
+		capacityForSingleDimension,
+		refillRateForSingleDimension,
 		dimension,
 		tokenbucket.WithLimitersBackend(provider.CreateBucketConfig(dimension), dimension, false),
 		tokenbucket.WithLockBackend(provider.CreateLockBackendConfig(), dimension),
@@ -66,7 +80,7 @@ func BenchmarkSingleDimension_WithLock(b *testing.B) {
 
 	ctx := context.Background()
 	b.ResetTimer()
-	b.SetParallelism(1)
+	b.SetParallelism(parallels)
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			bucket.Take(ctx)
@@ -95,12 +109,12 @@ func BenchmarkSingleDimension_OptimisticLock(b *testing.B) {
 		},
 	} {
 		b.Run(tc.message, func(b *testing.B) {
-			bucket, err := provider.CreateBucket(1000, 100, dimension, tc.opts...)
+			bucket, err := provider.CreateBucket(capacityForSingleDimension, refillRateForSingleDimension, dimension, tc.opts...)
 			require.NoError(b, err, "Failed to create bucket: %v", err)
 
 			ctx := context.Background()
 			b.ResetTimer()
-			b.SetParallelism(1)
+			b.SetParallelism(parallels)
 			b.RunParallel(func(pb *testing.PB) {
 				for pb.Next() {
 					bucket.Take(ctx)
@@ -138,12 +152,12 @@ func BenchmarkSingleDimension_PessimisticLock(b *testing.B) {
 		},
 	} {
 		b.Run(tc.message, func(b *testing.B) {
-			bucket, err := provider.CreateBucket(1000, 100, dimension, tc.opts...)
+			bucket, err := provider.CreateBucket(capacityForSingleDimension, refillRateForSingleDimension, dimension, tc.opts...)
 			require.NoError(b, err, "Failed to create bucket: %v", err)
 
 			ctx := context.Background()
 			b.ResetTimer()
-			b.SetParallelism(1)
+			b.SetParallelism(parallels)
 			b.RunParallel(func(pb *testing.PB) {
 				for pb.Next() {
 					bucket.Take(ctx)
@@ -152,87 +166,3 @@ func BenchmarkSingleDimension_PessimisticLock(b *testing.B) {
 		})
 	}
 }
-
-// // BenchmarkMultiDimensionDistributed tests performance across multiple dimensions
-// func BenchmarkMultiDimensionDistributed(b *testing.B) {
-// 	dimensionCounts := []int{10, 30, 50}
-
-// 	for _, dimCount := range dimensionCounts {
-// 		b.Run(fmt.Sprintf("Dimensions-%d", dimCount), func(b *testing.B) {
-// 			provider := storage.BenchmarkSetup(b)
-
-// 			// Create buckets for each dimension
-// 			buckets := make([]*tokenbucket.Bucket, dimCount)
-// 			for i := 0; i < dimCount; i++ {
-// 				bucket, err := provider.CreateBucket(100, 10, fmt.Sprintf("bench-multi-%d-%d", dimCount, i))
-// 				if err != nil {
-// 					b.Fatalf("Failed to create bucket %d: %v", i, err)
-// 				}
-// 				buckets[i] = bucket
-// 			}
-
-// 			ctx := context.Background()
-// 			var dimensionIndex int64
-
-// 			b.ResetTimer()
-
-// 			b.SetParallelism(dimCount * 2) // 2 goroutines per dimension
-// 			b.RunParallel(func(pb *testing.PB) {
-// 				for pb.Next() {
-// 					// Round-robin across dimensions
-// 					idx := atomic.AddInt64(&dimensionIndex, 1) % int64(dimCount)
-// 					_ = buckets[idx].Take(ctx)
-// 				}
-// 			})
-// 		})
-// 	}
-// }
-
-// // BenchmarkRateLimitedScenario simulates a realistic rate-limited scenario
-// func BenchmarkRateLimitedScenario(b *testing.B) {
-// 	provider := storage.BenchmarkSetup(b)
-
-// 	// Small bucket that will frequently exhaust tokens
-// 	bucket, err := provider.CreateBucket(10, 5, "bench-rate-limited")
-// 	if err != nil {
-// 		b.Fatalf("Failed to create bucket: %v", err)
-// 	}
-
-// 	ctx := context.Background()
-// 	b.ResetTimer()
-
-// 	b.SetParallelism(50) // High contention
-// 	b.RunParallel(func(pb *testing.PB) {
-// 		for pb.Next() {
-// 			_ = bucket.Take(ctx)
-// 			// Small delay to simulate real-world usage
-// 			time.Sleep(10 * time.Millisecond)
-// 		}
-// 	})
-// }
-
-// // BenchmarkSingleDimensionConcurrent tests concurrent performance with varying goroutine counts
-// func BenchmarkSingleDimensionConcurrent(b *testing.B) {
-// 	concurrencyLevels := []int{1, 10, 50, 100}
-
-// 	for _, concurrency := range concurrencyLevels {
-// 		b.Run(fmt.Sprintf("Concurrent-%d", concurrency), func(b *testing.B) {
-// 			provider := storage.BenchmarkSetup(b)
-
-// 			bucket, err := provider.CreateBucket(1000, 100, fmt.Sprintf("bench-concurrent-%d", concurrency))
-// 			if err != nil {
-// 				b.Fatalf("Failed to create bucket: %v", err)
-// 			}
-
-// 			ctx := context.Background()
-// 			b.ResetTimer()
-
-// 			b.SetParallelism(concurrency)
-// 			b.RunParallel(func(pb *testing.PB) {
-// 				for pb.Next() {
-// 					_ = bucket.Take(ctx)
-// 				}
-// 			})
-// 		})
-// 	}
-// }
