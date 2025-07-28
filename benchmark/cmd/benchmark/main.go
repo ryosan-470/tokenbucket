@@ -57,8 +57,6 @@ func main() {
 		report, err = runSingleDimensionTest(provider, cfg)
 	case "multi":
 		report, err = runMultiDimensionTest(provider, cfg)
-	case "lock-comparison":
-		report, err = runLockComparisonTest(provider, cfg)
 	default:
 		log.Fatalf("Unknown scenario: %s", cfg.Scenario)
 	}
@@ -81,7 +79,7 @@ func main() {
 func parseFlags() Config {
 	var cfg Config
 
-	flag.StringVar(&cfg.Scenario, "scenario", "single", "Benchmark scenario (single, multi, lock-comparison)")
+	flag.StringVar(&cfg.Scenario, "scenario", "single", "Benchmark scenario (single, multi)")
 	flag.IntVar(&cfg.Concurrency, "concurrency", 10, "Number of concurrent goroutines")
 	flag.DurationVar(&cfg.Duration, "duration", 60*time.Second, "Test duration")
 	flag.Int64Var(&cfg.Capacity, "capacity", 1000, "Token bucket capacity")
@@ -135,47 +133,6 @@ func runMultiDimensionTest(provider storage.Provider, cfg Config) (benchmark.Rep
 
 	// Run multi-dimensional load test
 	return runMultiDimensionalLoadTest(buckets, metrics, cfg)
-}
-
-func runLockComparisonTest(provider storage.Provider, cfg Config) (benchmark.Report, error) {
-	// Run both with and without lock
-	log.Println("Running with lock...")
-	bucketWithLock, err := provider.CreateBucket(
-		cfg.Capacity,
-		cfg.FillRate,
-		"load-test-with-lock",
-		tokenbucket.WithLockBackend(
-			provider.CreateLockBackendConfig(),
-			uuid.NewString(),
-		),
-	)
-	if err != nil {
-		return benchmark.Report{}, fmt.Errorf("failed to create bucket with lock: %w", err)
-	}
-
-	metricsWithLock := benchmark.NewMetrics()
-	reportWithLock, err := runLoadTest(bucketWithLock, metricsWithLock, cfg)
-	if err != nil {
-		return benchmark.Report{}, fmt.Errorf("failed to run with-lock test: %w", err)
-	}
-
-	log.Println("Running without lock...")
-	bucketWithoutLock, err := provider.CreateBucket(cfg.Capacity, cfg.FillRate, "load-test-without-lock")
-	if err != nil {
-		return benchmark.Report{}, fmt.Errorf("failed to create bucket without lock: %w", err)
-	}
-
-	metricsWithoutLock := benchmark.NewMetrics()
-	reportWithoutLock, err := runLoadTest(bucketWithoutLock, metricsWithoutLock, cfg)
-	if err != nil {
-		return benchmark.Report{}, fmt.Errorf("failed to run without-lock test: %w", err)
-	}
-
-	// Print comparison
-	printLockComparison(reportWithLock, reportWithoutLock)
-
-	// Return the with-lock report as primary result
-	return reportWithLock, nil
 }
 
 func runLoadTest(bucket *tokenbucket.Bucket, metrics *benchmark.Metrics, cfg Config) (benchmark.Report, error) {
@@ -317,24 +274,6 @@ func printReport(report benchmark.Report, cfg Config) {
 	fmt.Printf("  P99:  %v\n", report.LatencyP99)
 	fmt.Printf("  Max:  %v\n", report.LatencyMax)
 	fmt.Printf("  Min:  %v\n", report.LatencyMin)
-}
-
-func printLockComparison(withLock, withoutLock benchmark.Report) {
-	fmt.Printf("\n=== Lock Comparison ===\n")
-	fmt.Printf("%-20s | %-15s | %-15s | %s\n", "Metric", "With Lock", "Without Lock", "Difference")
-	fmt.Printf("%s\n", "--------------------------------------------------------------------------------")
-
-	fmt.Printf("%-20s | %-15.2f | %-15.2f | %.2fx\n",
-		"Ops/Second", withLock.AvgOpsPerSecond, withoutLock.AvgOpsPerSecond,
-		withoutLock.AvgOpsPerSecond/withLock.AvgOpsPerSecond)
-
-	fmt.Printf("%-20s | %-15.2f | %-15.2f | %.2fx\n",
-		"Success Rate (%)", withLock.SuccessRate, withoutLock.SuccessRate,
-		withoutLock.SuccessRate/withLock.SuccessRate)
-
-	fmt.Printf("%-20s | %-15s | %-15s | %.2fx\n",
-		"P95 Latency", withLock.LatencyP95, withoutLock.LatencyP95,
-		float64(withLock.LatencyP95)/float64(withoutLock.LatencyP95))
 }
 
 func saveReport(_ benchmark.Report, cfg Config) error {
