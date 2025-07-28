@@ -5,6 +5,7 @@
     "ddbbackend",
     "dynamodbcontainer",
     "dynamodbstorage",
+    "gomod",
     "mennanov",
     "ryosan",
     "stretchr",
