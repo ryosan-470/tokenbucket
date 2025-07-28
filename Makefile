@@ -5,4 +5,4 @@ test:
 
 .PHONY: benchmark
 benchmark:
-	$(GO) test -benchtime 10s -bench=. ./benchmark
+	$(GO) test -benchtime 1s -bench=. ./benchmark
