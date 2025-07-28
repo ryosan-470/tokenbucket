@@ -2,77 +2,24 @@ package benchmark
 
 import (
 	"context"
-	"fmt"
-	"sync/atomic"
 	"testing"
-	"time"
 
-	"github.com/google/uuid"
 	"github.com/ryosan-470/tokenbucket"
 	"github.com/ryosan-470/tokenbucket/benchmark/storage"
+	"github.com/stretchr/testify/require"
 )
 
-// BenchmarkSingleDimensionSequential tests single-threaded performance
-func BenchmarkSingleDimensionSequential(b *testing.B) {
+// BenchmarkSingleDimension_WithMemoryBackend tests the performance of a single dimension token bucket
+func BenchmarkSingleDimension_WithMemoryBackend(b *testing.B) {
 	provider := storage.BenchmarkSetup(b)
 
-	bucket, err := provider.CreateBucket(1000, 100, "bench-sequential")
-	if err != nil {
-		b.Fatalf("Failed to create bucket: %v", err)
-	}
+	bucket, err := provider.CreateBucket(1000, 100, "bench-with-memory-backend", tokenbucket.WithMemoryBackend())
+	require.NoError(b, err, "Failed to create bucket: %v", err)
 
 	ctx := context.Background()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
-		_ = bucket.Take(ctx)
-	}
-}
-
-// BenchmarkSingleDimensionConcurrent tests concurrent performance with varying goroutine counts
-func BenchmarkSingleDimensionConcurrent(b *testing.B) {
-	concurrencyLevels := []int{1, 10, 50, 100}
-
-	for _, concurrency := range concurrencyLevels {
-		b.Run(fmt.Sprintf("Concurrent-%d", concurrency), func(b *testing.B) {
-			provider := storage.BenchmarkSetup(b)
-
-			bucket, err := provider.CreateBucket(1000, 100, fmt.Sprintf("bench-concurrent-%d", concurrency))
-			if err != nil {
-				b.Fatalf("Failed to create bucket: %v", err)
-			}
-
-			ctx := context.Background()
-			b.ResetTimer()
-
-			b.SetParallelism(concurrency)
-			b.RunParallel(func(pb *testing.PB) {
-				for pb.Next() {
-					_ = bucket.Take(ctx)
-				}
-			})
-		})
-	}
-}
-
-// BenchmarkSingleDimensionWithMemoryBackend tests performance with in-memory backend
-func BenchmarkSingleDimensionWithMemoryBackend(b *testing.B) {
-	provider := storage.BenchmarkSetup(b)
-
-	bucket, err := provider.CreateBucket(
-		1000,
-		100,
-		"bench-with-memory-backend",
-		tokenbucket.WithMemoryBackend(),
-	)
-	if err != nil {
-		b.Fatalf("Failed to create bucket: %v", err)
-	}
-
-	ctx := context.Background()
-	b.ResetTimer()
-
-	b.SetParallelism(10)
+	b.SetParallelism(1)
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			_ = bucket.Take(ctx)
@@ -80,118 +27,212 @@ func BenchmarkSingleDimensionWithMemoryBackend(b *testing.B) {
 	})
 }
 
-// BenchmarkSingleDimensionWithLock tests performance with distributed locking
-func BenchmarkSingleDimensionWithLock(b *testing.B) {
+// BenchmarkSingleDimension_WithoutLock tests the performance of a single dimension token bucket without locks
+func BenchmarkSingleDimension_WithoutLock(b *testing.B) {
 	provider := storage.BenchmarkSetup(b)
-
-	bucket, err := provider.CreateBucket(
-		1000,
-		100,
-		"bench-with-lock",
-		tokenbucket.WithLockBackend(
-			provider.CreateLockBackendConfig(),
-			uuid.NewString(),
-		),
-	)
-	if err != nil {
-		b.Fatalf("Failed to create bucket: %v", err)
-	}
-
-	ctx := context.Background()
-	b.ResetTimer()
-
-	b.SetParallelism(10)
-	b.RunParallel(func(pb *testing.PB) {
-		for pb.Next() {
-			_ = bucket.Take(ctx)
-		}
-	})
-}
-
-// BenchmarkSingleDimensionWithLimitersBackend tests performance with Limiters backend
-func BenchmarkSingleDimensionWithLimitersBackend(b *testing.B) {
-	provider := storage.BenchmarkSetup(b)
-	dimension := "bench-with-limiters-backend"
+	dimension := "bench-without-lock"
 
 	bucket, err := provider.CreateBucket(
 		1000,
 		100,
 		dimension,
-		tokenbucket.WithLimitersBackend(
-			provider.CreateBucketConfig(dimension),
-			uuid.NewString(),
-			true, // enable race condition checking
-		),
+		tokenbucket.WithLimitersBackend(provider.CreateBucketConfig(dimension), dimension, false),
 	)
-	if err != nil {
-		b.Fatalf("Failed to create bucket: %v", err)
-	}
+	require.NoError(b, err, "Failed to create bucket: %v", err)
 
 	ctx := context.Background()
 	b.ResetTimer()
-
-	b.SetParallelism(10)
+	b.SetParallelism(1)
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			_ = bucket.Take(ctx)
+			bucket.Take(ctx)
 		}
 	})
 }
 
-// BenchmarkMultiDimensionDistributed tests performance across multiple dimensions
-func BenchmarkMultiDimensionDistributed(b *testing.B) {
-	dimensionCounts := []int{10, 30, 50}
+// BenchmarkSingleDimension_WithLock tests the performance of a single dimension token bucket with locks
+func BenchmarkSingleDimension_WithLock(b *testing.B) {
+	provider := storage.BenchmarkSetup(b)
+	dimension := "bench-with-lock"
 
-	for _, dimCount := range dimensionCounts {
-		b.Run(fmt.Sprintf("Dimensions-%d", dimCount), func(b *testing.B) {
-			provider := storage.BenchmarkSetup(b)
+	bucket, err := provider.CreateBucket(
+		1000,
+		100,
+		dimension,
+		tokenbucket.WithLimitersBackend(provider.CreateBucketConfig(dimension), dimension, false),
+		tokenbucket.WithLockBackend(provider.CreateLockBackendConfig(), dimension),
+	)
+	require.NoError(b, err, "Failed to create bucket: %v", err)
 
-			// Create buckets for each dimension
-			buckets := make([]*tokenbucket.Bucket, dimCount)
-			for i := 0; i < dimCount; i++ {
-				bucket, err := provider.CreateBucket(100, 10, fmt.Sprintf("bench-multi-%d-%d", dimCount, i))
-				if err != nil {
-					b.Fatalf("Failed to create bucket %d: %v", i, err)
-				}
-				buckets[i] = bucket
-			}
+	ctx := context.Background()
+	b.ResetTimer()
+	b.SetParallelism(1)
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			bucket.Take(ctx)
+		}
+	})
+}
+
+// BenchmarkSingleDimension_OptimisticLock tests the performance of a single dimension token bucket with optimistic locking
+func BenchmarkSingleDimension_OptimisticLock(b *testing.B) {
+	provider := storage.BenchmarkSetup(b)
+	dimension := "bench-optimistic-lock"
+
+	for _, tc := range []struct {
+		message string
+		opts    []tokenbucket.Option
+	}{
+		{
+			message: "WithCustomBackend",
+			opts:    []tokenbucket.Option{},
+		},
+		{
+			message: "WithLimitersBackend",
+			opts: []tokenbucket.Option{
+				tokenbucket.WithLimitersBackend(provider.CreateBucketConfig(dimension), dimension, true),
+			},
+		},
+	} {
+		b.Run(tc.message, func(b *testing.B) {
+			bucket, err := provider.CreateBucket(1000, 100, dimension, tc.opts...)
+			require.NoError(b, err, "Failed to create bucket: %v", err)
 
 			ctx := context.Background()
-			var dimensionIndex int64
-
 			b.ResetTimer()
-
-			b.SetParallelism(dimCount * 2) // 2 goroutines per dimension
+			b.SetParallelism(1)
 			b.RunParallel(func(pb *testing.PB) {
 				for pb.Next() {
-					// Round-robin across dimensions
-					idx := atomic.AddInt64(&dimensionIndex, 1) % int64(dimCount)
-					_ = buckets[idx].Take(ctx)
+					bucket.Take(ctx)
 				}
 			})
 		})
 	}
 }
 
-// BenchmarkRateLimitedScenario simulates a realistic rate-limited scenario
-func BenchmarkRateLimitedScenario(b *testing.B) {
+// BenchmarkSingleDimension_PessimisticLock tests the performance of a single dimension token bucket with pessimistic locking
+func BenchmarkSingleDimension_PessimisticLock(b *testing.B) {
 	provider := storage.BenchmarkSetup(b)
+	dimension := "bench-pessimistic-lock"
 
-	// Small bucket that will frequently exhaust tokens
-	bucket, err := provider.CreateBucket(10, 5, "bench-rate-limited")
-	if err != nil {
-		b.Fatalf("Failed to create bucket: %v", err)
+	lockCfg := provider.CreateLockBackendConfig()
+	lockBackend := tokenbucket.WithLockBackend(
+		lockCfg,
+		"bench-pessimistic-lock",
+	)
+
+	for _, tc := range []struct {
+		message string
+		opts    []tokenbucket.Option
+	}{
+		{
+			message: "WithCustomBackend",
+			opts:    []tokenbucket.Option{lockBackend},
+		},
+		{
+			message: "WithLimitersBackend",
+			opts: []tokenbucket.Option{
+				tokenbucket.WithLimitersBackend(provider.CreateBucketConfig(dimension), dimension, true),
+				lockBackend,
+			},
+		},
+	} {
+		b.Run(tc.message, func(b *testing.B) {
+			bucket, err := provider.CreateBucket(1000, 100, dimension, tc.opts...)
+			require.NoError(b, err, "Failed to create bucket: %v", err)
+
+			ctx := context.Background()
+			b.ResetTimer()
+			b.SetParallelism(1)
+			b.RunParallel(func(pb *testing.PB) {
+				for pb.Next() {
+					bucket.Take(ctx)
+				}
+			})
+		})
 	}
-
-	ctx := context.Background()
-	b.ResetTimer()
-
-	b.SetParallelism(50) // High contention
-	b.RunParallel(func(pb *testing.PB) {
-		for pb.Next() {
-			_ = bucket.Take(ctx)
-			// Small delay to simulate real-world usage
-			time.Sleep(10 * time.Millisecond)
-		}
-	})
 }
+
+// // BenchmarkMultiDimensionDistributed tests performance across multiple dimensions
+// func BenchmarkMultiDimensionDistributed(b *testing.B) {
+// 	dimensionCounts := []int{10, 30, 50}
+
+// 	for _, dimCount := range dimensionCounts {
+// 		b.Run(fmt.Sprintf("Dimensions-%d", dimCount), func(b *testing.B) {
+// 			provider := storage.BenchmarkSetup(b)
+
+// 			// Create buckets for each dimension
+// 			buckets := make([]*tokenbucket.Bucket, dimCount)
+// 			for i := 0; i < dimCount; i++ {
+// 				bucket, err := provider.CreateBucket(100, 10, fmt.Sprintf("bench-multi-%d-%d", dimCount, i))
+// 				if err != nil {
+// 					b.Fatalf("Failed to create bucket %d: %v", i, err)
+// 				}
+// 				buckets[i] = bucket
+// 			}
+
+// 			ctx := context.Background()
+// 			var dimensionIndex int64
+
+// 			b.ResetTimer()
+
+// 			b.SetParallelism(dimCount * 2) // 2 goroutines per dimension
+// 			b.RunParallel(func(pb *testing.PB) {
+// 				for pb.Next() {
+// 					// Round-robin across dimensions
+// 					idx := atomic.AddInt64(&dimensionIndex, 1) % int64(dimCount)
+// 					_ = buckets[idx].Take(ctx)
+// 				}
+// 			})
+// 		})
+// 	}
+// }
+
+// // BenchmarkRateLimitedScenario simulates a realistic rate-limited scenario
+// func BenchmarkRateLimitedScenario(b *testing.B) {
+// 	provider := storage.BenchmarkSetup(b)
+
+// 	// Small bucket that will frequently exhaust tokens
+// 	bucket, err := provider.CreateBucket(10, 5, "bench-rate-limited")
+// 	if err != nil {
+// 		b.Fatalf("Failed to create bucket: %v", err)
+// 	}
+
+// 	ctx := context.Background()
+// 	b.ResetTimer()
+
+// 	b.SetParallelism(50) // High contention
+// 	b.RunParallel(func(pb *testing.PB) {
+// 		for pb.Next() {
+// 			_ = bucket.Take(ctx)
+// 			// Small delay to simulate real-world usage
+// 			time.Sleep(10 * time.Millisecond)
+// 		}
+// 	})
+// }
+
+// // BenchmarkSingleDimensionConcurrent tests concurrent performance with varying goroutine counts
+// func BenchmarkSingleDimensionConcurrent(b *testing.B) {
+// 	concurrencyLevels := []int{1, 10, 50, 100}
+
+// 	for _, concurrency := range concurrencyLevels {
+// 		b.Run(fmt.Sprintf("Concurrent-%d", concurrency), func(b *testing.B) {
+// 			provider := storage.BenchmarkSetup(b)
+
+// 			bucket, err := provider.CreateBucket(1000, 100, fmt.Sprintf("bench-concurrent-%d", concurrency))
+// 			if err != nil {
+// 				b.Fatalf("Failed to create bucket: %v", err)
+// 			}
+
+// 			ctx := context.Background()
+// 			b.ResetTimer()
+
+// 			b.SetParallelism(concurrency)
+// 			b.RunParallel(func(pb *testing.PB) {
+// 				for pb.Next() {
+// 					_ = bucket.Take(ctx)
+// 				}
+// 			})
+// 		})
+// 	}
+// }
