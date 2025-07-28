@@ -13,5 +13,9 @@
     "tokenbucket"
   ],
 
-  "github.copilot.chat.codeGeneration.useInstructionFiles": true
+  "github.copilot.chat.codeGeneration.useInstructionFiles": true,
+
+  "go.testEnvVars": {
+     "TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE": "/var/run/docker.sock"
+  },
 }
