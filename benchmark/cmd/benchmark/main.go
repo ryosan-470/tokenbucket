@@ -249,8 +249,8 @@ func runMultiDimensionalLoadTest(buckets []*tokenbucket.Bucket, metrics *benchma
 
 					metrics.RecordTake(latency, err == nil)
 
-					// Slightly longer delay for multi-dimensional test
-					time.Sleep(5 * time.Millisecond)
+					// Small delay to prevent overwhelming the system
+					time.Sleep(1 * time.Millisecond)
 				}
 			}
 		}(i)
