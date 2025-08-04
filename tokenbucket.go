@@ -7,6 +7,7 @@ import (
 	"github.com/mennanov/limiters"
 
 	"github.com/ryosan-470/tokenbucket/internal/clock"
+	"github.com/ryosan-470/tokenbucket/storage"
 	"github.com/ryosan-470/tokenbucket/storage/dynamodb"
 )
 
@@ -25,7 +26,7 @@ type Bucket struct {
 	LastUpdated int64  // Timestamp of the last update in milliseconds
 	Dimension   string // Dimension of the token bucket
 
-	backend dynamodb.BucketBackendInterface
+	backend storage.Storage
 	bucket  *limiters.TokenBucket // Underlying token bucket implementation
 	lock    limiters.DistLocker   // DynamoDB lock for distributed coordination
 }
@@ -34,7 +35,7 @@ type options struct {
 	clock   clock.Clock
 	logger  limiters.Logger
 	lock    limiters.DistLocker
-	backend dynamodb.BucketBackendInterface
+	backend storage.Storage
 }
 
 type Option func(*options)
@@ -71,7 +72,8 @@ func WithLimitersBackend(cfg *dynamodb.BucketBackendConfig, dimension string, en
 
 func WithMemoryBackend() Option {
 	return func(o *options) {
-		o.backend = limiters.NewTokenBucketInMemory()
+		limitersBackend := limiters.NewTokenBucketInMemory()
+		o.backend = dynamodb.NewLimitersBackendAdapter(limitersBackend)
 	}
 }
 
@@ -84,7 +86,7 @@ func NewBucket(capacity, fillRate int64, dimension string, cfg *dynamodb.BucketB
 		o(opt)
 	}
 
-	var backend dynamodb.BucketBackendInterface
+	var backend storage.Storage
 	if opt.backend != nil {
 		backend = opt.backend
 	} else {
@@ -106,7 +108,7 @@ func NewBucket(capacity, fillRate int64, dimension string, cfg *dynamodb.BucketB
 		capacity,
 		calculateFillRate(fillRate),
 		lock,
-		backend,
+		dynamodb.NewStorageBackendAdapter(backend),
 		opt.clock,
 		opt.logger,
 	)

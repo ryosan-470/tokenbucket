@@ -6,6 +6,8 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/mennanov/limiters"
+
+	"github.com/ryosan-470/tokenbucket/storage"
 )
 
 type BucketBackendConfig struct {
@@ -21,23 +23,25 @@ func NewBucketBackendConfig(client *dynamodb.Client, tableName string) *BucketBa
 }
 
 // NewLimitersBackend creates a new TokenBucketDynamoDB instance implemented by the limiters package.
-func (b *BucketBackendConfig) NewLimitersBackend(ctx context.Context, dimension string, enableRaceHandling bool) (BucketBackendInterface, error) {
+func (b *BucketBackendConfig) NewLimitersBackend(ctx context.Context, dimension string, enableRaceHandling bool) (storage.Storage, error) {
 	props, err := limiters.LoadDynamoDBTableProperties(ctx, b.client, b.tableName)
 	if err != nil {
 		return nil, err
 	}
 
-	return limiters.NewTokenBucketDynamoDB(
+	limitersBackend := limiters.NewTokenBucketDynamoDB(
 		b.client,
 		dimension,
 		props,
 		time.Duration(1*time.Second), // Default fill rate
 		enableRaceHandling,
-	), nil
+	)
+
+	return NewLimitersBackendAdapter(limitersBackend), nil
 }
 
 // NewCustomBackend creates a new Bucket instance implemented by this package.
-func (b *BucketBackendConfig) NewCustomBackend(ctx context.Context, dimension string) (BucketBackendInterface, error) {
+func (b *BucketBackendConfig) NewCustomBackend(ctx context.Context, dimension string) (storage.Storage, error) {
 	props, err := limiters.LoadDynamoDBTableProperties(ctx, b.client, b.tableName)
 	if err != nil {
 		return nil, err

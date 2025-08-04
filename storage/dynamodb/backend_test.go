@@ -8,9 +8,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/mennanov/limiters"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/ryosan-470/tokenbucket/storage"
 )
 
 const (
@@ -34,7 +35,7 @@ func TestBackend(t *testing.T) {
 		backend := NewBackend(infra.Client, "non-existent-key", props, 1*time.Hour)
 		state, err := backend.State(context.Background())
 		require.NoError(t, err)
-		assert.Equal(t, limiters.TokenBucketState{}, state)
+		assert.Equal(t, storage.State{}, state)
 	})
 
 	t.Run("SetState and State", func(t *testing.T) {
@@ -43,7 +44,7 @@ func TestBackend(t *testing.T) {
 		defer infra.DeleteTable(t, props.TableName)
 		backend := NewBackend(infra.Client, testBackendPartitionKey, props, 1*time.Hour)
 
-		initialState := limiters.TokenBucketState{
+		initialState := storage.State{
 			Last:      123,
 			Available: 456,
 		}
@@ -64,7 +65,7 @@ func TestBackend(t *testing.T) {
 		backend := NewBackend(infra.Client, testBackendPartitionKey, props, 1*time.Hour)
 
 		// Set some initial state
-		initialState := limiters.TokenBucketState{
+		initialState := storage.State{
 			Last:      123,
 			Available: 456,
 		}
@@ -101,11 +102,11 @@ func TestBackend(t *testing.T) {
 		require.NoError(t, err)
 
 		// Backend1 updates the state successfully
-		err = backend1.SetState(ctx, limiters.TokenBucketState{Last: 1, Available: 1})
+		err = backend1.SetState(ctx, storage.State{Last: 1, Available: 1})
 		require.NoError(t, err)
 
 		// Backend2 tries to update with an old version (0), which should fail
-		err = backend2.SetState(ctx, limiters.TokenBucketState{Last: 2, Available: 2})
+		err = backend2.SetState(ctx, storage.State{Last: 2, Available: 2})
 		require.Error(t, err, "expected an error due to conditional check failure")
 
 		// Verify the state in DB is still from backend1's update
@@ -145,7 +146,7 @@ func TestBackend(t *testing.T) {
 				}
 
 				// Try to update the state
-				err = backend.SetState(ctx, limiters.TokenBucketState{Last: 1, Available: 1})
+				err = backend.SetState(ctx, storage.State{Last: 1, Available: 1})
 				if err == nil {
 					mu.Lock()
 					successCount++
