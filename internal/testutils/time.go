@@ -2,12 +2,16 @@ package testutils
 
 import (
 	"time"
+
+	"github.com/ryosan-470/tokenbucket/internal/clock"
 )
 
 // MockClock implements limiters.Clock interface for testing
 type MockClock struct {
 	currentTime time.Time
 }
+
+var _ clock.Clock = (*MockClock)(nil)
 
 func NewMockClock(startTime time.Time) *MockClock {
 	return &MockClock{currentTime: startTime}

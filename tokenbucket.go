@@ -6,6 +6,7 @@ import (
 
 	"github.com/mennanov/limiters"
 
+	"github.com/ryosan-470/tokenbucket/internal/clock"
 	"github.com/ryosan-470/tokenbucket/storage/dynamodb"
 )
 
@@ -30,7 +31,7 @@ type Bucket struct {
 }
 
 type options struct {
-	clock   limiters.Clock
+	clock   clock.Clock
 	logger  limiters.Logger
 	lock    limiters.DistLocker
 	backend dynamodb.BucketBackendInterface
@@ -38,7 +39,7 @@ type options struct {
 
 type Option func(*options)
 
-func WithClock(c limiters.Clock) Option {
+func WithClock(c clock.Clock) Option {
 	return func(o *options) {
 		o.clock = c
 	}
@@ -76,7 +77,7 @@ func WithMemoryBackend() Option {
 
 func NewBucket(capacity, fillRate int64, dimension string, cfg *dynamodb.BucketBackendConfig, opts ...Option) (*Bucket, error) {
 	opt := &options{
-		clock:  limiters.NewSystemClock(),
+		clock:  clock.NewSystemClock(),
 		logger: &limiters.StdLogger{},
 	}
 	for _, o := range opts {
