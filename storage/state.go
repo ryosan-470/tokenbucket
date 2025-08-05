@@ -17,6 +17,10 @@ func NewState(available int64, last int64) State {
 	}
 }
 
+func (s State) IsEmpty() bool {
+	return s.Available == 0 && s.Last == 0
+}
+
 // Storage defines the common interface for token bucket storage backends
 type Storage interface {
 	// State gets the current state of the TokenBucket

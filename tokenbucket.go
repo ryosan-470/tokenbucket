@@ -2,13 +2,10 @@ package tokenbucket
 
 import (
 	"context"
-	"time"
-
-	"github.com/mennanov/limiters"
+	"sync"
 
 	"github.com/ryosan-470/tokenbucket/internal/clock"
 	"github.com/ryosan-470/tokenbucket/storage"
-	"github.com/ryosan-470/tokenbucket/storage/dynamodb"
 )
 
 type TokenBucket interface {
@@ -27,15 +24,12 @@ type Bucket struct {
 	Dimension   string // Dimension of the token bucket
 
 	backend storage.Storage
-	bucket  *limiters.TokenBucket // Underlying token bucket implementation
-	lock    limiters.DistLocker   // DynamoDB lock for distributed coordination
+	clock   clock.Clock // Clock for time-related operations
+	mu      sync.Mutex  // Mutex to protect concurrent access
 }
 
 type options struct {
-	clock   clock.Clock
-	logger  limiters.Logger
-	lock    limiters.DistLocker
-	backend storage.Storage
+	clock clock.Clock
 }
 
 type Option func(*options)
@@ -46,78 +40,63 @@ func WithClock(c clock.Clock) Option {
 	}
 }
 
-func WithLogger(l limiters.Logger) Option {
-	return func(o *options) {
-		o.logger = l
-	}
-}
-
-func WithLockBackend(cfg *dynamodb.LockBackendConfig, lockID string) Option {
-	return func(o *options) {
-		o.lock = cfg.NewLockBackend(lockID)
-	}
-}
-
-func WithMemoryBackend() Option {
-	return func(o *options) {
-		limitersBackend := limiters.NewTokenBucketInMemory()
-		o.backend = dynamodb.NewLimitersBackendAdapter(limitersBackend)
-	}
-}
-
-func NewBucket(capacity, fillRate int64, dimension string, cfg *dynamodb.BucketBackendConfig, opts ...Option) (*Bucket, error) {
+func NewBucket(capacity, fillRate int64, dimension string, backend storage.Storage, opts ...Option) (*Bucket, error) {
 	opt := &options{
-		clock:  clock.NewSystemClock(),
-		logger: &limiters.StdLogger{},
+		clock: clock.NewSystemClock(),
 	}
 	for _, o := range opts {
 		o(opt)
 	}
-
-	var backend storage.Storage
-	if opt.backend != nil {
-		backend = opt.backend
-	} else {
-		var err error
-		backend, err = cfg.NewCustomBackend(context.Background(), dimension)
-		if err != nil {
-			return nil, ErrInitializedBucketFailed
-		}
-	}
-
-	var lock limiters.DistLocker
-	if opt.lock != nil {
-		lock = opt.lock
-	} else {
-		lock = limiters.NewLockNoop()
-	}
-
-	bucket := limiters.NewTokenBucket(
-		capacity,
-		calculateFillRate(fillRate),
-		lock,
-		dynamodb.NewStorageBackendAdapter(backend),
-		opt.clock,
-		opt.logger,
-	)
 
 	return &Bucket{
 		Capacity:  capacity,
 		FillRate:  fillRate,
 		Available: capacity,
 		Dimension: dimension,
-		backend:   backend,
-		bucket:    bucket,
-		lock:      lock,
+
+		backend: backend,
+		clock:   opt.clock,
+		mu:      sync.Mutex{},
 	}, nil
 }
 
 func (b *Bucket) Take(ctx context.Context) error {
-	if _, err := b.bucket.Take(ctx, 1); err != nil {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	state, err := b.backend.State(ctx)
+	if err != nil {
 		return err
 	}
 
-	// TODO: update Available and LastUpdated fields
+	if state.IsEmpty() {
+		// Initialize the bucket state if it's empty
+		state = storage.NewState(b.Capacity, b.clock.Now().UnixNano())
+	}
+
+	// Refill tokens based on the elapsed time since the last update
+	now := b.clock.Now().UnixNano()
+	tokenToAdd := (now - state.Last) * b.FillRate / 1e9 // Convert nanoseconds to seconds
+	if tokenToAdd > 0 {
+		state.Available += tokenToAdd
+		if state.Available > b.Capacity {
+			state.Available = b.Capacity
+		}
+		state.Last = now
+	}
+
+	// Take a token if available
+	if state.Available <= 0 {
+		return ErrNoTokensAvailable
+	}
+
+	state.Available--
+	if err := b.backend.SetState(ctx, state); err != nil {
+		return err
+	}
+
+	b.Available = state.Available
+	b.LastUpdated = state.Last
 	return nil
 }
 
@@ -130,11 +109,4 @@ func (b *Bucket) Get(ctx context.Context) error {
 	b.Available = state.Available
 	b.LastUpdated = state.Last
 	return nil
-}
-
-func calculateFillRate(fillRate int64) time.Duration {
-	if fillRate <= 0 {
-		return 0
-	}
-	return time.Second / time.Duration(fillRate)
 }
