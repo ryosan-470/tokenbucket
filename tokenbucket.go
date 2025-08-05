@@ -58,18 +58,6 @@ func WithLockBackend(cfg *dynamodb.LockBackendConfig, lockID string) Option {
 	}
 }
 
-func WithLimitersBackend(cfg *dynamodb.BucketBackendConfig, dimension string, enableRaceHandling bool) Option {
-	backend, err := cfg.NewLimitersBackend(context.Background(), dimension, enableRaceHandling)
-	if err != nil {
-		return func(o *options) {
-			o.backend = nil
-		}
-	}
-	return func(o *options) {
-		o.backend = backend
-	}
-}
-
 func WithMemoryBackend() Option {
 	return func(o *options) {
 		limitersBackend := limiters.NewTokenBucketInMemory()

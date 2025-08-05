@@ -50,7 +50,6 @@ func BenchmarkSingleDimension_WithoutLock(b *testing.B) {
 		capacityForSingleDimension,
 		refillRateForSingleDimension,
 		dimension,
-		tokenbucket.WithLimitersBackend(provider.CreateBucketConfig(dimension), dimension, false),
 	)
 	require.NoError(b, err, "Failed to create bucket: %v", err)
 
@@ -73,7 +72,6 @@ func BenchmarkSingleDimension_WithLock(b *testing.B) {
 		capacityForSingleDimension,
 		refillRateForSingleDimension,
 		dimension,
-		tokenbucket.WithLimitersBackend(provider.CreateBucketConfig(dimension), dimension, false),
 		tokenbucket.WithLockBackend(provider.CreateLockBackendConfig(), dimension),
 	)
 	require.NoError(b, err, "Failed to create bucket: %v", err)
@@ -100,12 +98,6 @@ func BenchmarkSingleDimension_OptimisticLock(b *testing.B) {
 		{
 			message: "WithCustomBackend",
 			opts:    []tokenbucket.Option{},
-		},
-		{
-			message: "WithLimitersBackend",
-			opts: []tokenbucket.Option{
-				tokenbucket.WithLimitersBackend(provider.CreateBucketConfig(dimension), dimension, true),
-			},
 		},
 	} {
 		b.Run(tc.message, func(b *testing.B) {
@@ -142,13 +134,6 @@ func BenchmarkSingleDimension_PessimisticLock(b *testing.B) {
 		{
 			message: "WithCustomBackend",
 			opts:    []tokenbucket.Option{lockBackend},
-		},
-		{
-			message: "WithLimitersBackend",
-			opts: []tokenbucket.Option{
-				tokenbucket.WithLimitersBackend(provider.CreateBucketConfig(dimension), dimension, true),
-				lockBackend,
-			},
 		},
 	} {
 		b.Run(tc.message, func(b *testing.B) {

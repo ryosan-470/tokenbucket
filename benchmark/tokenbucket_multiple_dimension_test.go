@@ -63,7 +63,6 @@ func BenchmarkMultipleDimension_WithoutLock(b *testing.B) {
 			capacityForMultipleDimension,
 			refillRateForMultipleDimension,
 			dimension,
-			tokenbucket.WithLimitersBackend(provider.CreateBucketConfig(dimension), dimension, false),
 		)
 		require.NoError(b, err, "Failed to create bucket: %v", err)
 		buckets[i] = bucket
@@ -95,7 +94,6 @@ func BenchmarkMultipleDimension_WithLock(b *testing.B) {
 			capacityForMultipleDimension,
 			refillRateForMultipleDimension,
 			dimension,
-			tokenbucket.WithLimitersBackend(provider.CreateBucketConfig(dimension), dimension, false),
 			tokenbucket.WithLockBackend(provider.CreateLockBackendConfig(), dimension),
 		)
 		require.NoError(b, err, "Failed to create bucket: %v", err)
@@ -128,12 +126,6 @@ func BenchmarkMultipleDimension_OptimisticLock(b *testing.B) {
 		{
 			message: "WithCustomBackend",
 			opts:    []tokenbucket.Option{},
-		},
-		{
-			message: "WithLimitersBackend",
-			opts: []tokenbucket.Option{
-				tokenbucket.WithLimitersBackend(provider.CreateBucketConfig("bench-optimistic-lock"), "bench-optimistic-lock", true),
-			},
 		},
 	} {
 		b.Run(tc.message, func(b *testing.B) {
@@ -179,13 +171,6 @@ func BenchmarkMultipleDimension_PessimisticLock(b *testing.B) {
 		{
 			message: "WithCustomBackend",
 			opts:    []tokenbucket.Option{lockBackend},
-		},
-		{
-			message: "WithLimitersBackend",
-			opts: []tokenbucket.Option{
-				tokenbucket.WithLimitersBackend(provider.CreateBucketConfig("bench-pessimistic-lock"), "bench-pessimistic-lock", true),
-				lockBackend,
-			},
 		},
 	} {
 		b.Run(tc.message, func(b *testing.B) {

@@ -315,9 +315,6 @@ func getBackendOptions(cfg Config, provider storage.Provider) ([]tokenbucket.Opt
 		// do nothing, use default custom backend
 	case "memory":
 		opts = append(opts, tokenbucket.WithMemoryBackend())
-	case "limiters":
-		backendCfg := provider.CreateBucketConfig(cfg.dimension)
-		opts = append(opts, tokenbucket.WithLimitersBackend(backendCfg, cfg.dimension, cfg.RaceCheck))
 	default:
 		return nil, fmt.Errorf("unknown backend type: %s", cfg.BackendType)
 	}
