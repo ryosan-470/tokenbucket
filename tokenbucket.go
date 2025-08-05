@@ -10,6 +10,7 @@ import (
 
 type TokenBucket interface {
 	// Take attempts to take a token from the bucket. If successful, it returns nil.
+	// If no tokens are available, it returns an ErrNoTokensAvailable error.
 	Take(ctx context.Context) error
 
 	// Get attempts to get the current state of the bucket, including available tokens and last updated timestamp.

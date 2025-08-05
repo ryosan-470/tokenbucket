@@ -2,14 +2,15 @@ package tokenbucket_test
 
 import (
 	"context"
-	"fmt"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/ryosan-470/tokenbucket"
 	"github.com/ryosan-470/tokenbucket/internal/testutils"
+	"github.com/ryosan-470/tokenbucket/storage"
 	"github.com/ryosan-470/tokenbucket/storage/dynamodb"
+	"github.com/ryosan-470/tokenbucket/storage/memory"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -23,54 +24,34 @@ func TestTokenBucket(t *testing.T) {
 		lockTable := infra.CreateLockTable(t, uuid.NewString())
 		defer infra.DeleteTable(t, lockTable.TableName)
 
+		memoryBackend := memory.NewBackend()
 		bucketCfg := dynamodb.NewBucketBackendConfig(infra.Client, bucketTable.TableName)
-		lockCfg := dynamodb.NewLockBackendConfig(infra.Client, lockTable.TableName, 30*time.Second, 3, 5*time.Second)
+		ddbBackend, err := bucketCfg.NewCustomBackend(context.Background(), uuid.NewString())
+		require.NoError(t, err)
 
 		capacity := int64(1000)
 		fillRate := int64(10)
 		now := time.Now()
 
-		t.Run("OK", func(t *testing.T) {
-			dimension := uuid.NewString()
-			bucket, err := tokenbucket.NewBucket(capacity, fillRate, dimension, bucketCfg)
-			require.NoError(t, err)
-			assert.Equal(t, capacity, bucket.Capacity)
-			assert.Equal(t, fillRate, bucket.FillRate)
-			assert.Equal(t, dimension, bucket.Dimension)
-			assert.NotNil(t, bucket.LastUpdated)
-		})
-
-		t.Run("WithLockBackend", func(t *testing.T) {
-			dimension := uuid.NewString()
-			lockID := fmt.Sprintf("lock-%s", dimension)
-
-			bucket, err := tokenbucket.NewBucket(
-				capacity,
-				fillRate,
-				dimension,
-				bucketCfg,
-				tokenbucket.WithLockBackend(lockCfg, lockID),
-			)
-			require.NoError(t, err)
-			assert.Equal(t, capacity, bucket.Capacity)
-			assert.Equal(t, fillRate, bucket.FillRate)
-			assert.Equal(t, dimension, bucket.Dimension)
-		})
-
-		t.Run("WithMemoryBackend", func(t *testing.T) {
-			dimension := uuid.NewString()
-
-			bucket, err := tokenbucket.NewBucket(
-				capacity,
-				fillRate,
-				dimension,
-				nil,
-				tokenbucket.WithMemoryBackend(),
-			)
-			require.NoError(t, err)
-			assert.Equal(t, capacity, bucket.Capacity)
-			assert.Equal(t, fillRate, bucket.FillRate)
-			assert.Equal(t, dimension, bucket.Dimension)
+		t.Run("Backend", func(t *testing.T) {
+			for _, tt := range []struct {
+				name    string
+				backend storage.Storage
+			}{
+				{name: "DynamoDB", backend: ddbBackend},
+				{name: "Memory", backend: memoryBackend},
+			} {
+				t.Run(tt.name, func(t *testing.T) {
+					dimension := uuid.NewString()
+					bucket, err := tokenbucket.NewBucket(capacity, fillRate, dimension, tt.backend)
+					require.NoError(t, err)
+					assert.Equal(t, capacity, bucket.Available)
+					assert.Equal(t, capacity, bucket.Capacity)
+					assert.Equal(t, fillRate, bucket.FillRate)
+					assert.Equal(t, dimension, bucket.Dimension)
+					assert.Equal(t, int64(0), bucket.LastUpdated)
+				})
+			}
 		})
 
 		t.Run("WithClock", func(t *testing.T) {
@@ -81,32 +62,37 @@ func TestTokenBucket(t *testing.T) {
 				capacity,
 				fillRate,
 				dimension,
-				bucketCfg,
+				ddbBackend,
 				tokenbucket.WithClock(mockClock),
 			)
 			require.NoError(t, err)
+			assert.Equal(t, capacity, bucket.Available)
 			assert.Equal(t, capacity, bucket.Capacity)
 			assert.Equal(t, fillRate, bucket.FillRate)
 			assert.Equal(t, dimension, bucket.Dimension)
-			assert.NotNil(t, bucket)
+			assert.Equal(t, int64(0), bucket.LastUpdated)
 		})
 
 		t.Run("ZeroCapacity", func(t *testing.T) {
 			dimension := uuid.NewString()
-			bucket, err := tokenbucket.NewBucket(0, fillRate, dimension, bucketCfg)
+			bucket, err := tokenbucket.NewBucket(0, fillRate, dimension, ddbBackend)
 			require.NoError(t, err)
+			assert.Equal(t, int64(0), bucket.Available)
 			assert.Equal(t, int64(0), bucket.Capacity)
 			assert.Equal(t, fillRate, bucket.FillRate)
 			assert.Equal(t, dimension, bucket.Dimension)
+			assert.Equal(t, int64(0), bucket.LastUpdated)
 		})
 
 		t.Run("ZeroFillRate", func(t *testing.T) {
 			dimension := uuid.NewString()
-			bucket, err := tokenbucket.NewBucket(capacity, 0, dimension, bucketCfg)
+			bucket, err := tokenbucket.NewBucket(capacity, 0, dimension, ddbBackend)
 			require.NoError(t, err)
+			assert.Equal(t, capacity, bucket.Available)
 			assert.Equal(t, capacity, bucket.Capacity)
 			assert.Equal(t, int64(0), bucket.FillRate)
 			assert.Equal(t, dimension, bucket.Dimension)
+			assert.Equal(t, int64(0), bucket.LastUpdated)
 		})
 	})
 
@@ -117,74 +103,99 @@ func TestTokenBucket(t *testing.T) {
 
 		bucketCfg := dynamodb.NewBucketBackendConfig(infra.Client, bucketTable.TableName)
 
-		t.Run("SingleToken", func(t *testing.T) {
-			dimension := uuid.NewString()
-			bucket, err := tokenbucket.NewBucket(10, 1, dimension, bucketCfg)
-			require.NoError(t, err)
+		for _, tt := range []struct {
+			name    string
+			prepare func(ctx context.Context) (string, storage.Storage)
+		}{
+			{
+				name: "DynamoDB Backend",
+				prepare: func(ctx context.Context) (string, storage.Storage) {
+					dimension := uuid.NewString()
+					backend, err := bucketCfg.NewCustomBackend(ctx, dimension)
+					require.NoError(t, err)
+					return dimension, backend
+				},
+			},
+			{
+				name: "Memory Backend",
+				prepare: func(ctx context.Context) (string, storage.Storage) {
+					dimension := uuid.NewString()
+					backend := memory.NewBackend()
+					return dimension, backend
+				},
+			},
+		} {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Run("Take 1 token", func(t *testing.T) {
+					dimension, backend := tt.prepare(ctx)
+					bucket, err := tokenbucket.NewBucket(10, 1, dimension, backend)
+					require.NoError(t, err)
 
-			require.NoError(t, bucket.Take(ctx))
-			require.NoError(t, bucket.Get(ctx))
-			assert.Equal(t, int64(9), bucket.Available)
-		})
+					require.NoError(t, bucket.Take(ctx))
+					assert.Equal(t, int64(9), bucket.Available)
+					assert.NotEqual(t, int64(0), bucket.LastUpdated)
+				})
 
-		t.Run("ExhaustAllTokens", func(t *testing.T) {
-			dimension := uuid.NewString()
-			bucket, err := tokenbucket.NewBucket(3, 1, dimension, bucketCfg)
-			require.NoError(t, err)
+				t.Run("ExhaustAllTokens", func(t *testing.T) {
+					dimension, backend := tt.prepare(ctx)
+					bucket, err := tokenbucket.NewBucket(3, 1, dimension, backend)
+					require.NoError(t, err)
 
-			// Take all 3 tokens
-			for i := 0; i < 3; i++ {
-				require.NoError(t, bucket.Take(ctx))
-			}
+					// Take all 3 tokens
+					for i := 0; i < 3; i++ {
+						require.NoError(t, bucket.Take(ctx))
+					}
 
-			// Get state to check available tokens
-			require.NoError(t, bucket.Get(ctx))
-			assert.Equal(t, int64(0), bucket.Available)
+					// Get state to check available tokens
+					assert.Equal(t, int64(0), bucket.Available)
 
-			// Next attempt should fail
-			require.Error(t, bucket.Take(ctx))
-		})
+					// Next attempt should fail
+					assert.ErrorIs(t, bucket.Take(ctx), tokenbucket.ErrNoTokensAvailable)
+				})
 
-		t.Run("WithTokenRefill", func(t *testing.T) {
-			now := time.Now()
-			mockClock := testutils.NewMockClock(now)
-			dimension := uuid.NewString()
-			bucket, err := tokenbucket.NewBucket(5, 1, dimension, bucketCfg, tokenbucket.WithClock(mockClock))
-			require.NoError(t, err)
+				t.Run("WithTokenRefill", func(t *testing.T) {
+					now := time.Now()
+					mockClock := testutils.NewMockClock(now)
+					dimension, backend := tt.prepare(ctx)
+					bucket, err := tokenbucket.NewBucket(5, 1, dimension, backend, tokenbucket.WithClock(mockClock))
+					require.NoError(t, err)
 
-			// Take 5 tokens
-			for i := 0; i < 5; i++ {
-				require.NoError(t, bucket.Take(ctx))
-			}
-			// Get state to check available tokens
-			require.NoError(t, bucket.Get(ctx))
-			assert.Equal(t, int64(0), bucket.Available)
+					// Take 5 tokens
+					for i := 0; i < 5; i++ {
+						require.NoError(t, bucket.Take(ctx))
+					}
+					// Get state to check available tokens
+					assert.Equal(t, int64(0), bucket.Available)
 
-			// Next take should fail
-			require.Error(t, bucket.Take(ctx))
+					// Next take should fail
+					assert.ErrorIs(t, bucket.Take(ctx), tokenbucket.ErrNoTokensAvailable)
 
-			// Advance time by 1 second (should add 1 token)
-			mockClock.Advance(1000 * time.Millisecond)
+					// Advance time by 1 second (should add 1 token)
+					mockClock.Advance(1000 * time.Millisecond)
 
-			// Now take should succeed
-			require.NoError(t, bucket.Take(ctx))
-			// Get state to check available tokens
-			require.NoError(t, bucket.Get(ctx))
-			assert.Equal(t, int64(0), bucket.Available)
-		})
+					// Now take should succeed
+					require.NoError(t, bucket.Take(ctx))
+					assert.Equal(t, int64(0), bucket.Available)
+				})
+			})
+		}
 
-		t.Run("ContextCancellation", func(t *testing.T) {
+		t.Run("ContextCancellation with DynamoDB Backend", func(t *testing.T) {
 			cancelCtx, cancel := context.WithCancel(context.Background())
 			cancel()
 
 			dimension := uuid.NewString()
-			bucket, err := tokenbucket.NewBucket(10, 1, dimension, bucketCfg)
+			backend, err := bucketCfg.NewCustomBackend(context.Background(), dimension)
 			require.NoError(t, err)
-			require.Error(t, bucket.Take(cancelCtx))
+			bucket, err := tokenbucket.NewBucket(10, 1, dimension, backend)
+			require.NoError(t, err)
+			err = bucket.Take(cancelCtx)
+			require.Error(t, err)
 		})
 	})
 
 	t.Run("Get", func(t *testing.T) {
+		ctx := context.Background()
 		bucketTable := infra.CreateTokenBucketTable(t, uuid.NewString())
 		defer infra.DeleteTable(t, bucketTable.TableName)
 
@@ -193,16 +204,39 @@ func TestTokenBucket(t *testing.T) {
 		capacity := int64(1000)
 		fillRate := int64(10)
 
-		dimension := uuid.NewString()
-		bucket, err := tokenbucket.NewBucket(capacity, fillRate, dimension, bucketCfg)
-		require.NoError(t, err)
+		for _, tt := range []struct {
+			name    string
+			prepare func(ctx context.Context) (string, storage.Storage)
+		}{
+			{
+				name: "DynamoDB Backend",
+				prepare: func(ctx context.Context) (string, storage.Storage) {
+					dimension := uuid.NewString()
+					backend, err := bucketCfg.NewCustomBackend(ctx, dimension)
+					require.NoError(t, err)
+					return dimension, backend
+				},
+			},
+			{
+				name: "Memory Backend",
+				prepare: func(ctx context.Context) (string, storage.Storage) {
+					dimension := uuid.NewString()
+					backend := memory.NewBackend()
+					return dimension, backend
+				},
+			},
+		} {
+			t.Run(tt.name, func(t *testing.T) {
+				dimension, backend := tt.prepare(ctx)
+				bucket, err := tokenbucket.NewBucket(capacity, fillRate, dimension, backend)
+				require.NoError(t, err)
 
-		t.Run("OK", func(t *testing.T) {
-			require.NoError(t, bucket.Get(context.Background()))
-			assert.Equal(t, capacity, bucket.Capacity)
-			assert.Equal(t, fillRate, bucket.FillRate)
-			assert.Equal(t, dimension, bucket.Dimension)
-			assert.NotNil(t, bucket.LastUpdated)
-		})
+				require.NoError(t, bucket.Get(ctx))
+				assert.Equal(t, capacity, bucket.Capacity)
+				assert.Equal(t, fillRate, bucket.FillRate)
+				assert.Equal(t, dimension, bucket.Dimension)
+				assert.Equal(t, int64(0), bucket.LastUpdated)
+			})
+		}
 	})
 }
