@@ -5,7 +5,6 @@ import (
 	"sync"
 
 	"github.com/ryosan-470/tokenbucket/internal/clock"
-	"github.com/ryosan-470/tokenbucket/storage"
 )
 
 type TokenBucket interface {
@@ -24,9 +23,9 @@ type Bucket struct {
 	FillRate  int64  // Rate at which tokens are added to the bucket (tokens per second)
 	Dimension string // Dimension of the token bucket
 
-	backend storage.Storage
-	clock   clock.Clock  // Clock for time-related operations
-	mu      sync.RWMutex // RWMutex to protect concurrent access to the bucket state
+	r     TokenBucketStateRepository
+	clock clock.Clock  // Clock for time-related operations
+	mu    sync.RWMutex // RWMutex to protect concurrent access to the bucket state
 }
 
 type options struct {
@@ -41,7 +40,7 @@ func WithClock(c clock.Clock) Option {
 	}
 }
 
-func NewBucket(capacity, fillRate int64, dimension string, backend storage.Storage, opts ...Option) (*Bucket, error) {
+func NewBucket(capacity, fillRate int64, dimension string, r TokenBucketStateRepository, opts ...Option) (*Bucket, error) {
 	opt := &options{
 		clock: clock.NewSystemClock(),
 	}
@@ -54,9 +53,9 @@ func NewBucket(capacity, fillRate int64, dimension string, backend storage.Stora
 		FillRate:  fillRate,
 		Dimension: dimension,
 
-		backend: backend,
-		clock:   opt.clock,
-		mu:      sync.RWMutex{},
+		r:     r,
+		clock: opt.clock,
+		mu:    sync.RWMutex{},
 	}, nil
 }
 
@@ -64,25 +63,25 @@ func (b *Bucket) Take(ctx context.Context) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	state, err := b.backend.State(ctx)
+	state, err := b.r.State(ctx)
 	if err != nil {
 		return err
 	}
 
 	if state.IsEmpty() {
 		// Initialize the bucket state if it's empty
-		state = storage.NewState(b.Capacity, b.clock.Now().UnixNano())
+		state = NewState(b.Capacity, b.clock.Now().UnixNano())
 	}
 
 	// Refill tokens based on the elapsed time since the last update
 	now := b.clock.Now().UnixNano()
-	tokenToAdd := (now - state.Last) * b.FillRate / 1e9 // Convert nanoseconds to seconds
+	tokenToAdd := (now - state.LastUpdated) * b.FillRate / 1e9 // Convert nanoseconds to seconds
 	if tokenToAdd > 0 {
 		state.Available += tokenToAdd
 		if state.Available > b.Capacity {
 			state.Available = b.Capacity
 		}
-		state.Last = now
+		state.LastUpdated = now
 	}
 
 	// Take a token if available
@@ -91,7 +90,7 @@ func (b *Bucket) Take(ctx context.Context) error {
 	}
 
 	state.Available--
-	if err := b.backend.SetState(ctx, state); err != nil {
+	if err := b.r.SetState(ctx, state); err != nil {
 		return err
 	}
 
@@ -103,13 +102,13 @@ func (b *Bucket) GetState(ctx context.Context) (State, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
-	s, err := b.backend.State(ctx)
+	s, err := b.r.State(ctx)
 	if err != nil {
 		return State{}, err
 	}
 
 	return State{
 		Available:   s.Available,
-		LastUpdated: s.Last,
+		LastUpdated: s.LastUpdated,
 	}, nil
 }
