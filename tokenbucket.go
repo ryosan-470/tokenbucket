@@ -29,11 +29,6 @@ type Bucket struct {
 	mu      sync.RWMutex // RWMutex to protect concurrent access to the bucket state
 }
 
-type State struct {
-	Available   int64 // Number of available tokens
-	LastUpdated int64 // Last update timestamp in nanoseconds
-}
-
 type options struct {
 	clock clock.Clock
 }
