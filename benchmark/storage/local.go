@@ -15,6 +15,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/ryosan-470/tokenbucket"
+	"github.com/ryosan-470/tokenbucket/storage"
 	dynamodbstorage "github.com/ryosan-470/tokenbucket/storage/dynamodb"
 )
 
@@ -116,9 +117,8 @@ func (h *LocalProvider) CreateBucketConfig(dimension string) *dynamodbstorage.Bu
 }
 
 // CreateBucket creates a TokenBucket with the specified configuration
-func (h *LocalProvider) CreateBucket(capacity, fillRate int64, dimension string, opts ...tokenbucket.Option) (*tokenbucket.Bucket, error) {
-	cfg := h.CreateBucketConfig(dimension)
-	return tokenbucket.NewBucket(capacity, fillRate, dimension, cfg, opts...)
+func (h *LocalProvider) CreateBucket(capacity, fillRate int64, dimension string, backend storage.Storage, opts ...tokenbucket.Option) (*tokenbucket.Bucket, error) {
+	return tokenbucket.NewBucket(capacity, fillRate, dimension, backend, opts...)
 }
 
 // CreateLockBackendConfig creates a LockBackendConfig for managing locks
@@ -213,13 +213,13 @@ func (h *LocalProvider) createLockTable(ctx context.Context) error {
 // BenchmarkSetup is a helper function for benchmark setup
 func BenchmarkSetup(b *testing.B) *LocalProvider {
 	b.Helper()
-	
+
 	ctx := context.Background()
 	provider := GetLocalProvider()
-	
+
 	if err := provider.Setup(ctx); err != nil {
 		b.Fatalf("Failed to setup benchmark provider: %v", err)
 	}
-	
+
 	return provider
 }

@@ -6,6 +6,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/ryosan-470/tokenbucket"
+	"github.com/ryosan-470/tokenbucket/storage"
 	dynamodbstorage "github.com/ryosan-470/tokenbucket/storage/dynamodb"
 )
 
@@ -13,7 +14,7 @@ import (
 type Provider interface {
 	Setup(ctx context.Context) error
 	Cleanup(ctx context.Context) error
-	CreateBucket(capacity, fillRate int64, dimension string, opts ...tokenbucket.Option) (*tokenbucket.Bucket, error)
+	CreateBucket(capacity, fillRate int64, dimension string, backend storage.Storage, opts ...tokenbucket.Option) (*tokenbucket.Bucket, error)
 	CreateBucketConfig(dimension string) *dynamodbstorage.BucketBackendConfig
 	CreateLockBackendConfig() *dynamodbstorage.LockBackendConfig
 }

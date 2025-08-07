@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 
 	"github.com/ryosan-470/tokenbucket"
+	"github.com/ryosan-470/tokenbucket/storage"
 	dynamodbstorage "github.com/ryosan-470/tokenbucket/storage/dynamodb"
 )
 
@@ -81,9 +82,8 @@ func (h *AWSProvider) CreateBucketConfig(dimension string) *dynamodbstorage.Buck
 }
 
 // CreateBucket creates a TokenBucket with the specified configuration
-func (h *AWSProvider) CreateBucket(capacity, fillRate int64, dimension string, opts ...tokenbucket.Option) (*tokenbucket.Bucket, error) {
-	cfg := h.CreateBucketConfig(dimension)
-	return tokenbucket.NewBucket(capacity, fillRate, dimension, cfg, opts...)
+func (h *AWSProvider) CreateBucket(capacity, fillRate int64, dimension string, backend storage.Storage, opts ...tokenbucket.Option) (*tokenbucket.Bucket, error) {
+	return tokenbucket.NewBucket(capacity, fillRate, dimension, backend, opts...)
 }
 
 // CreateLockBackendConfig creates a LockBackendConfig for managing locks
