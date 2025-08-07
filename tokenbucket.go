@@ -27,8 +27,8 @@ type Bucket struct {
 	Dimension   string // Dimension of the token bucket
 
 	backend storage.Storage
-	clock   clock.Clock // Clock for time-related operations
-	mu      sync.Mutex  // Mutex to protect concurrent access
+	clock   clock.Clock  // Clock for time-related operations
+	mu      sync.RWMutex // RWMutex to protect concurrent access to the bucket state
 }
 
 type options struct {
@@ -59,7 +59,7 @@ func NewBucket(capacity, fillRate int64, dimension string, backend storage.Stora
 
 		backend: backend,
 		clock:   opt.clock,
-		mu:      sync.Mutex{},
+		mu:      sync.RWMutex{},
 	}, nil
 }
 
@@ -104,8 +104,8 @@ func (b *Bucket) Take(ctx context.Context) error {
 }
 
 func (b *Bucket) Get(ctx context.Context) (*Bucket, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
+	b.mu.RLock()
+	defer b.mu.RUnlock()
 
 	state, err := b.backend.State(ctx)
 	if err != nil {
