@@ -102,6 +102,9 @@ func (b *Bucket) Take(ctx context.Context) error {
 }
 
 func (b *Bucket) Get(ctx context.Context) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
 	state, err := b.backend.State(ctx)
 	if err != nil {
 		return err

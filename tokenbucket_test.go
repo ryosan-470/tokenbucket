@@ -2,6 +2,8 @@ package tokenbucket_test
 
 import (
 	"context"
+	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -176,6 +178,322 @@ func TestTokenBucket(t *testing.T) {
 					// Now take should succeed
 					require.NoError(t, bucket.Take(ctx))
 					assert.Equal(t, int64(0), bucket.Available)
+				})
+
+				t.Run("ConcurrentTake", func(t *testing.T) {
+					dimension, backend := tt.prepare(ctx)
+					capacity := int64(10)
+					bucket, err := tokenbucket.NewBucket(capacity, 1, dimension, backend)
+					require.NoError(t, err)
+
+					// Test concurrent takes equal to capacity
+					numGoroutines := int(capacity)
+					var wg sync.WaitGroup
+					errors := make(chan error, numGoroutines)
+
+					// Launch goroutines to take tokens concurrently
+					for i := 0; i < numGoroutines; i++ {
+						wg.Add(1)
+						go func() {
+							defer wg.Done()
+							if err := bucket.Take(ctx); err != nil {
+								errors <- err
+							}
+						}()
+					}
+
+					// Wait for all goroutines to complete
+					wg.Wait()
+					close(errors)
+
+					// Check that no errors occurred
+					for err := range errors {
+						require.NoError(t, err)
+					}
+
+					// Verify final state - all tokens should be consumed
+					require.NoError(t, bucket.Get(ctx))
+					assert.Equal(t, int64(0), bucket.Available)
+
+					// Additional take should fail
+					assert.ErrorIs(t, bucket.Take(ctx), tokenbucket.ErrNoTokensAvailable)
+				})
+
+				t.Run("ConcurrentTakeExceedsCapacity", func(t *testing.T) {
+					dimension, backend := tt.prepare(ctx)
+					capacity := int64(5)
+					numGoroutines := 10 // More goroutines than capacity
+					bucket, err := tokenbucket.NewBucket(capacity, 1, dimension, backend)
+					require.NoError(t, err)
+
+					var wg sync.WaitGroup
+					successCount := int64(0)
+					errorCount := int64(0)
+					results := make(chan error, numGoroutines)
+
+					// Launch more goroutines than available tokens
+					for i := 0; i < numGoroutines; i++ {
+						wg.Add(1)
+						go func() {
+							defer wg.Done()
+							err := bucket.Take(ctx)
+							results <- err
+						}()
+					}
+
+					// Wait for all goroutines to complete
+					wg.Wait()
+					close(results)
+
+					// Count successes and failures
+					for result := range results {
+						if result == nil {
+							successCount++
+						} else if errors.Is(result, tokenbucket.ErrNoTokensAvailable) {
+							errorCount++
+						} else {
+							require.NoError(t, result) // Unexpected error
+						}
+					}
+
+					// Verify that exactly 'capacity' operations succeeded
+					assert.Equal(t, capacity, successCount, "Expected %d successful takes", capacity)
+					assert.Equal(t, int64(numGoroutines)-capacity, errorCount, "Expected %d failed takes", numGoroutines-int(capacity))
+
+					// Verify final state - all tokens should be consumed
+					require.NoError(t, bucket.Get(ctx))
+					assert.Equal(t, int64(0), bucket.Available)
+				})
+
+				t.Run("ConcurrentTakeAndGet", func(t *testing.T) {
+					dimension, backend := tt.prepare(ctx)
+					capacity := int64(10)
+					bucket, err := tokenbucket.NewBucket(capacity, 1, dimension, backend)
+					require.NoError(t, err)
+
+					numTakeGoroutines := 5
+					numGetGoroutines := 5
+					var wg sync.WaitGroup
+
+					takeResults := make(chan error, numTakeGoroutines)
+					getResults := make(chan error, numGetGoroutines)
+					getValues := make(chan int64, numGetGoroutines)
+
+					// Launch Take goroutines
+					for i := 0; i < numTakeGoroutines; i++ {
+						wg.Add(1)
+						go func() {
+							defer wg.Done()
+							err := bucket.Take(ctx)
+							takeResults <- err
+						}()
+					}
+
+					// Launch Get goroutines
+					for i := 0; i < numGetGoroutines; i++ {
+						wg.Add(1)
+						go func() {
+							defer wg.Done()
+							if err := bucket.Get(ctx); err != nil {
+								getResults <- err
+								return
+							}
+							getValues <- bucket.Available
+							getResults <- nil
+						}()
+					}
+
+					// Wait for all goroutines to complete
+					wg.Wait()
+					close(takeResults)
+					close(getResults)
+					close(getValues)
+
+					// Verify Take operations
+					takeSuccessCount := 0
+					takeErrorCount := 0
+					for takeResult := range takeResults {
+						if takeResult == nil {
+							takeSuccessCount++
+						} else if errors.Is(takeResult, tokenbucket.ErrNoTokensAvailable) {
+							takeErrorCount++
+						} else {
+							require.NoError(t, takeResult) // Unexpected error
+						}
+					}
+
+					// Verify Get operations - should all succeed without errors
+					for getResult := range getResults {
+						require.NoError(t, getResult)
+					}
+
+					// Verify that all Get values are within valid range
+					for available := range getValues {
+						assert.GreaterOrEqual(t, available, int64(0), "Available tokens should not be negative")
+						assert.LessOrEqual(t, available, capacity, "Available tokens should not exceed capacity")
+					}
+
+					// Verify that exactly the expected number of Take operations succeeded
+					assert.Equal(t, numTakeGoroutines, takeSuccessCount, "All Take operations should succeed with sufficient tokens")
+					assert.Equal(t, 0, takeErrorCount, "No Take operations should fail with sufficient tokens")
+
+					// Verify final state
+					require.NoError(t, bucket.Get(ctx))
+					expectedRemaining := capacity - int64(numTakeGoroutines)
+					assert.Equal(t, expectedRemaining, bucket.Available)
+				})
+
+				t.Run("ConcurrentWithTokenRefill", func(t *testing.T) {
+					now := time.Now()
+					mockClock := testutils.NewMockClock(now)
+					dimension, backend := tt.prepare(ctx)
+					capacity := int64(5)
+					fillRate := int64(2) // 2 tokens per second
+					bucket, err := tokenbucket.NewBucket(capacity, fillRate, dimension, backend, tokenbucket.WithClock(mockClock))
+					require.NoError(t, err)
+
+					// First, exhaust all tokens
+					for i := 0; i < int(capacity); i++ {
+						require.NoError(t, bucket.Take(ctx))
+					}
+					assert.Equal(t, int64(0), bucket.Available)
+
+					// Advance time to add some tokens back
+					mockClock.Advance(1500 * time.Millisecond) // 1.5 seconds = 3 tokens
+
+					numGoroutines := 6 // More than available tokens (3)
+					var wg sync.WaitGroup
+					results := make(chan error, numGoroutines)
+
+					// Launch goroutines concurrently to compete for the refilled tokens
+					for i := 0; i < numGoroutines; i++ {
+						wg.Add(1)
+						go func() {
+							defer wg.Done()
+							err := bucket.Take(ctx)
+							results <- err
+						}()
+					}
+
+					// Wait for all goroutines to complete
+					wg.Wait()
+					close(results)
+
+					// Count results
+					successCount := 0
+					errorCount := 0
+					for result := range results {
+						if result == nil {
+							successCount++
+						} else if errors.Is(result, tokenbucket.ErrNoTokensAvailable) {
+							errorCount++
+						} else {
+							require.NoError(t, result) // Unexpected error
+						}
+					}
+
+					// After 1.5 seconds with 2 tokens/sec rate, we should have 3 tokens available
+					// So exactly 3 operations should succeed, 3 should fail
+					assert.Equal(t, 3, successCount, "Exactly 3 takes should succeed after token refill")
+					assert.Equal(t, 3, errorCount, "Exactly 3 takes should fail when tokens are exhausted")
+
+					// Verify final state is consistent
+					require.NoError(t, bucket.Get(ctx))
+					assert.Equal(t, int64(0), bucket.Available, "All refilled tokens should be consumed")
+				})
+
+				t.Run("HighConcurrencyStress", func(t *testing.T) {
+					dimension, backend := tt.prepare(ctx)
+					capacity := int64(20)
+					bucket, err := tokenbucket.NewBucket(capacity, 1, dimension, backend)
+					require.NoError(t, err)
+
+					numGoroutines := 100 // High concurrency
+					timeout := 10 * time.Second
+					ctx, cancel := context.WithTimeout(ctx, timeout)
+					defer cancel()
+
+					var wg sync.WaitGroup
+					takeResults := make(chan error, numGoroutines/2)
+					getResults := make(chan error, numGoroutines/2)
+					getValues := make(chan int64, numGoroutines/2)
+
+					// Launch Take goroutines (50)
+					for i := 0; i < numGoroutines/2; i++ {
+						wg.Add(1)
+						go func() {
+							defer wg.Done()
+							err := bucket.Take(ctx)
+							takeResults <- err
+						}()
+					}
+
+					// Launch Get goroutines (50)
+					for i := 0; i < numGoroutines/2; i++ {
+						wg.Add(1)
+						go func() {
+							defer wg.Done()
+							if err := bucket.Get(ctx); err != nil {
+								getResults <- err
+								return
+							}
+							getValues <- bucket.Available
+							getResults <- nil
+						}()
+					}
+
+					// Wait for all goroutines to complete with timeout protection
+					done := make(chan bool)
+					go func() {
+						wg.Wait()
+						done <- true
+					}()
+
+					select {
+					case <-done:
+						// All goroutines completed successfully
+					case <-ctx.Done():
+						t.Fatal("Test timed out - possible deadlock detected")
+					}
+
+					close(takeResults)
+					close(getResults)
+					close(getValues)
+
+					// Count Take results
+					takeSuccessCount := 0
+					takeErrorCount := 0
+					for takeResult := range takeResults {
+						if takeResult == nil {
+							takeSuccessCount++
+						} else if errors.Is(takeResult, tokenbucket.ErrNoTokensAvailable) {
+							takeErrorCount++
+						} else {
+							require.NoError(t, takeResult) // Unexpected error
+						}
+					}
+
+					// Verify Get operations - should all succeed without errors
+					for getResult := range getResults {
+						require.NoError(t, getResult)
+					}
+
+					// Verify that all Get values are within valid range
+					for available := range getValues {
+						assert.GreaterOrEqual(t, available, int64(0), "Available tokens should not be negative")
+						assert.LessOrEqual(t, available, capacity, "Available tokens should not exceed capacity")
+					}
+
+					// High-level consistency checks
+					assert.Equal(t, numGoroutines/2, takeSuccessCount+takeErrorCount, "All Take operations should complete")
+					assert.LessOrEqual(t, takeSuccessCount, int(capacity), "Success count should not exceed capacity")
+					assert.GreaterOrEqual(t, takeSuccessCount, 1, "At least some Take operations should succeed")
+
+					// Verify final state is consistent
+					require.NoError(t, bucket.Get(ctx))
+					expectedRemaining := capacity - int64(takeSuccessCount)
+					assert.Equal(t, expectedRemaining, bucket.Available, "Final state should be consistent")
+					assert.GreaterOrEqual(t, bucket.Available, int64(0), "Available tokens should not be negative")
 				})
 			})
 		}
