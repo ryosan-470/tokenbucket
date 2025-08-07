@@ -10,7 +10,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/ryosan-470/tokenbucket"
 	"github.com/ryosan-470/tokenbucket/internal/testutils"
-	"github.com/ryosan-470/tokenbucket/storage"
 	"github.com/ryosan-470/tokenbucket/storage/dynamodb"
 	"github.com/ryosan-470/tokenbucket/storage/memory"
 	"github.com/stretchr/testify/assert"
@@ -37,15 +36,15 @@ func TestTokenBucket(t *testing.T) {
 
 		t.Run("Backend", func(t *testing.T) {
 			for _, tt := range []struct {
-				name    string
-				backend storage.Storage
+				name string
+				repo tokenbucket.TokenBucketStateRepository
 			}{
-				{name: "DynamoDB", backend: ddbBackend},
-				{name: "Memory", backend: memoryBackend},
+				{name: "DynamoDB", repo: ddbBackend},
+				{name: "Memory", repo: memoryBackend},
 			} {
 				t.Run(tt.name, func(t *testing.T) {
 					dimension := uuid.NewString()
-					bucket, err := tokenbucket.NewBucket(capacity, fillRate, dimension, tt.backend)
+					bucket, err := tokenbucket.NewBucket(capacity, fillRate, dimension, tt.repo)
 					require.NoError(t, err)
 
 					state, err := bucket.GetState(context.Background())
@@ -119,7 +118,7 @@ func TestTokenBucket(t *testing.T) {
 
 		for _, tt := range []struct {
 			name    string
-			prepare func(ctx context.Context) (string, storage.Storage)
+			prepare func(ctx context.Context) (string, tokenbucket.TokenBucketStateRepository)
 		}{
 			// TODO: fix DynamoDB backend
 			// {
@@ -133,7 +132,7 @@ func TestTokenBucket(t *testing.T) {
 			// },
 			{
 				name: "Memory Backend",
-				prepare: func(ctx context.Context) (string, storage.Storage) {
+				prepare: func(ctx context.Context) (string, tokenbucket.TokenBucketStateRepository) {
 					dimension := uuid.NewString()
 					backend := memory.NewBackend()
 					return dimension, backend
@@ -555,11 +554,11 @@ func TestTokenBucket(t *testing.T) {
 
 		for _, tt := range []struct {
 			name    string
-			prepare func(ctx context.Context) (string, storage.Storage)
+			prepare func(ctx context.Context) (string, tokenbucket.TokenBucketStateRepository)
 		}{
 			{
 				name: "DynamoDB Backend",
-				prepare: func(ctx context.Context) (string, storage.Storage) {
+				prepare: func(ctx context.Context) (string, tokenbucket.TokenBucketStateRepository) {
 					dimension := uuid.NewString()
 					backend, err := bucketCfg.NewCustomBackend(ctx, dimension)
 					require.NoError(t, err)
@@ -568,7 +567,7 @@ func TestTokenBucket(t *testing.T) {
 			},
 			{
 				name: "Memory Backend",
-				prepare: func(ctx context.Context) (string, storage.Storage) {
+				prepare: func(ctx context.Context) (string, tokenbucket.TokenBucketStateRepository) {
 					dimension := uuid.NewString()
 					backend := memory.NewBackend()
 					return dimension, backend
