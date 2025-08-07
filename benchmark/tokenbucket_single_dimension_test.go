@@ -8,6 +8,7 @@ import (
 
 	"github.com/ryosan-470/tokenbucket"
 	"github.com/ryosan-470/tokenbucket/benchmark/storage"
+	"github.com/ryosan-470/tokenbucket/storage/memory"
 	"github.com/stretchr/testify/require"
 )
 
@@ -18,134 +19,44 @@ const (
 	parallels = 10
 )
 
-// BenchmarkSingleDimension_WithMemoryBackend tests the performance of a single dimension token bucket
-func BenchmarkSingleDimension_WithMemoryBackend(b *testing.B) {
+// BenchmarkSingleDimension tests the performance of a single dimension token bucket
+func BenchmarkSingleDimension(b *testing.B) {
 	provider := storage.BenchmarkSetup(b)
 
-	bucket, err := provider.CreateBucket(
-		capacityForSingleDimension,
-		refillRateForSingleDimension,
-		"bench-with-memory-backend",
-		tokenbucket.WithMemoryBackend(),
-	)
-	require.NoError(b, err, "Failed to create bucket: %v", err)
-
-	ctx := context.Background()
-	b.ResetTimer()
-
-	b.SetParallelism(parallels)
-	b.RunParallel(func(pb *testing.PB) {
-		for pb.Next() {
-			_ = bucket.Take(ctx)
-		}
-	})
-}
-
-// BenchmarkSingleDimension_WithoutLock tests the performance of a single dimension token bucket without locks
-func BenchmarkSingleDimension_WithoutLock(b *testing.B) {
-	provider := storage.BenchmarkSetup(b)
-	dimension := "bench-without-lock"
-
-	bucket, err := provider.CreateBucket(
-		capacityForSingleDimension,
-		refillRateForSingleDimension,
-		dimension,
-	)
-	require.NoError(b, err, "Failed to create bucket: %v", err)
-
-	ctx := context.Background()
-	b.ResetTimer()
-	b.SetParallelism(parallels)
-	b.RunParallel(func(pb *testing.PB) {
-		for pb.Next() {
-			bucket.Take(ctx)
-		}
-	})
-}
-
-// BenchmarkSingleDimension_WithLock tests the performance of a single dimension token bucket with locks
-func BenchmarkSingleDimension_WithLock(b *testing.B) {
-	provider := storage.BenchmarkSetup(b)
-	dimension := "bench-with-lock"
-
-	bucket, err := provider.CreateBucket(
-		capacityForSingleDimension,
-		refillRateForSingleDimension,
-		dimension,
-		tokenbucket.WithLockBackend(provider.CreateLockBackendConfig(), dimension),
-	)
-	require.NoError(b, err, "Failed to create bucket: %v", err)
-
-	ctx := context.Background()
-	b.ResetTimer()
-	b.SetParallelism(parallels)
-	b.RunParallel(func(pb *testing.PB) {
-		for pb.Next() {
-			bucket.Take(ctx)
-		}
-	})
-}
-
-// BenchmarkSingleDimension_OptimisticLock tests the performance of a single dimension token bucket with optimistic locking
-func BenchmarkSingleDimension_OptimisticLock(b *testing.B) {
-	provider := storage.BenchmarkSetup(b)
-	dimension := "bench-optimistic-lock"
-
-	for _, tc := range []struct {
-		message string
-		opts    []tokenbucket.Option
+	for _, tt := range []struct {
+		name   string
+		bucket func() *tokenbucket.Bucket
 	}{
 		{
-			message: "WithCustomBackend",
-			opts:    []tokenbucket.Option{},
+			name: "WithMemoryBackend",
+			bucket: func() *tokenbucket.Bucket {
+				backend := memory.NewBackend()
+				bucket, err := provider.CreateBucket(capacityForSingleDimension, refillRateForSingleDimension, "bench-with-memory-backend", backend)
+				require.NoError(b, err, "Failed to create bucket: %v", err)
+				return bucket
+			},
+		},
+		{
+			name: "WithDynamoDBBackend",
+			bucket: func() *tokenbucket.Bucket {
+				ddbCfg := provider.CreateBucketConfig("bench-with-dynamodb-backend")
+				backend, err := ddbCfg.NewCustomBackend(context.Background(), "bench-with-dynamodb-backend")
+				require.NoError(b, err, "Failed to create backend: %v", err)
+				bucket, err := provider.CreateBucket(capacityForSingleDimension, refillRateForSingleDimension, "bench-with-dynamodb-backend", backend)
+				require.NoError(b, err, "Failed to create bucket: %v", err)
+				return bucket
+			},
 		},
 	} {
-		b.Run(tc.message, func(b *testing.B) {
-			bucket, err := provider.CreateBucket(capacityForSingleDimension, refillRateForSingleDimension, dimension, tc.opts...)
-			require.NoError(b, err, "Failed to create bucket: %v", err)
-
+		b.Run(tt.name, func(b *testing.B) {
 			ctx := context.Background()
+			bucket := tt.bucket()
 			b.ResetTimer()
+
 			b.SetParallelism(parallels)
 			b.RunParallel(func(pb *testing.PB) {
 				for pb.Next() {
-					bucket.Take(ctx)
-				}
-			})
-		})
-	}
-}
-
-// BenchmarkSingleDimension_PessimisticLock tests the performance of a single dimension token bucket with pessimistic locking
-func BenchmarkSingleDimension_PessimisticLock(b *testing.B) {
-	provider := storage.BenchmarkSetup(b)
-	dimension := "bench-pessimistic-lock"
-
-	lockCfg := provider.CreateLockBackendConfig()
-	lockBackend := tokenbucket.WithLockBackend(
-		lockCfg,
-		"bench-pessimistic-lock",
-	)
-
-	for _, tc := range []struct {
-		message string
-		opts    []tokenbucket.Option
-	}{
-		{
-			message: "WithCustomBackend",
-			opts:    []tokenbucket.Option{lockBackend},
-		},
-	} {
-		b.Run(tc.message, func(b *testing.B) {
-			bucket, err := provider.CreateBucket(capacityForSingleDimension, refillRateForSingleDimension, dimension, tc.opts...)
-			require.NoError(b, err, "Failed to create bucket: %v", err)
-
-			ctx := context.Background()
-			b.ResetTimer()
-			b.SetParallelism(parallels)
-			b.RunParallel(func(pb *testing.PB) {
-				for pb.Next() {
-					bucket.Take(ctx)
+					_ = bucket.Take(ctx)
 				}
 			})
 		})
