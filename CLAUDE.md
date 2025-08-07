@@ -17,17 +17,26 @@ The codebase is organized as follows:
   - Uses the `github.com/mennanov/limiters` library as the underlying implementation
   - `errors.go`: Custom error definitions for the library
 
-- **Internal utilities (`internal/testutils/`)**: Testing utilities
-  - `dynamodb.go`: DynamoDB test setup and helper functions
-  - `time.go`: Time-related test utilities
+- **Internal utilities (`internal/`)**: Shared utilities
+  - `testutils/`: Testing utilities
+    - `dynamodb.go`: DynamoDB test setup and helper functions
+    - `time.go`: Time-related test utilities
+  - `clock/`: Clock abstraction for testable time operations
+    - `clock.go`: Clock interface and system clock implementation
 
-- **Storage layer (`storage/dynamodb/`)**: DynamoDB-specific implementations
-  - `backend.go`: DynamoDB backend implementation for token bucket storage
-  - `backend_test.go`: Tests for DynamoDB backend functionality
-  - `config.go`: Backend configuration for DynamoDB token bucket storage and lock settings
-  - `lock.go`: Distributed locking implementation using DynamoDB with TTL and backoff
-  - `lock_test.go`: Comprehensive test suite for lock functionality
-  - `main_test.go`: Test setup and teardown utilities
+- **Storage layer (`storage/`)**: Storage backends and interfaces
+  - `state.go`: Common storage interface and state structure
+  - `memory/`: In-memory storage backend
+    - `backend.go`: Memory-based storage implementation
+    - `backend_test.go`: Tests for memory backend
+  - `dynamodb/`: DynamoDB-specific implementations
+    - `adapter.go`: Adapter for limiters library integration
+    - `backend.go`: DynamoDB backend implementation for token bucket storage
+    - `backend_test.go`: Tests for DynamoDB backend functionality
+    - `config.go`: Backend configuration for DynamoDB token bucket storage and lock settings
+    - `lock.go`: Distributed locking implementation using DynamoDB with TTL and backoff
+    - `lock_test.go`: Comprehensive test suite for lock functionality
+    - `main_test.go`: Test setup and teardown utilities
 
 - **Benchmark package (`benchmark/`)**: Performance testing and metrics
   - `cmd/benchmark/main.go`: Command-line benchmarking tool
@@ -41,11 +50,13 @@ The codebase is organized as follows:
 
 ## Key Design Patterns
 
-- **Dependency Injection**: Backend storage is injected via `BucketBackendConfig`
-- **Interface Segregation**: Clean separation between token bucket interface and storage backend
+- **Interface Segregation**: Clean separation between token bucket interface and storage backend via `storage.Storage` interface
+- **Adapter Pattern**: Seamless integration with `limiters` library through adapter layer
+- **Dependency Injection**: Backend storage is injected via configuration
 - **Distributed Locking**: Custom DynamoDB-based lock implementation with automatic cleanup via TTL
+- **Clock Abstraction**: Testable time operations through `internal/clock` interface
 - **Error Handling**: Custom errors defined in `errors.go`
-- **Options Pattern**: Functional options for configuring lock behavior (backoff, TTL, etc.)
+- **Options Pattern**: Functional options for configuring bucket behavior
 - **Testcontainers**: Isolated testing with DynamoDB Local containers
 
 ## Development Commands
@@ -72,7 +83,7 @@ make benchmark
 # or
 go test -bench=. -benchmem ./benchmark
 
-# Run CLI benchmark tool
+# Run CLI load testing tool
 cd benchmark/cmd/benchmark
 go run main.go -scenario=single -concurrency=10 -duration=60s
 
@@ -104,20 +115,14 @@ The project includes comprehensive test coverage:
 
 ### Benchmark Suite
 - **Single Dimension Tests** (`tokenbucket_single_dimension_test.go`): Performance testing with high load on a single dimension
-  - Memory backend benchmark
-  - Tests with and without distributed locking
-  - Configuration: Capacity=1000, FillRate=100 tokens/second, 10 goroutines
-- **Multiple Dimension Tests** (`tokenbucket_multiple_dimension_test.go`): Performance testing across multiple dimensions (10 dimensions)
-  - Round-robin token acquisition across dimensions
-  - Memory backend and distributed scenarios
-  - Configuration per dimension: Capacity=1000, FillRate=100 tokens/second, 10 goroutines
-- **CLI Benchmark Tool** (`cmd/benchmark/main.go`): Command-line tool for sustained load testing
+- **Multiple Dimension Tests** (`tokenbucket_multiple_dimension_test.go`): Multi-dimension round-robin testing
+- **CLI Load Testing Tool** (`cmd/benchmark/main.go`): Interactive command-line tool for sustained load testing
   - Real-time metrics with 1-second snapshots
-  - Multiple scenarios (single, multi) and backend types (custom, memory, limiters)
-  - Provider support for local DynamoDB and AWS DynamoDB
-  - Report generation and optional file output
+  - Backend types: `memory` (default), `custom` (DynamoDB)
+  - Provider types: `local` (DynamoDB Local), `aws` (AWS DynamoDB)
+  - Available scenarios: `single`, `multi`
+- Configuration: Capacity=1000, FillRate=100 tokens/second, 10 goroutines (default)
 - Metrics collection for throughput and latency analysis
-- Comparative testing between local and DynamoDB implementations
 
 ## Dependencies
 
@@ -171,10 +176,10 @@ Typical usage involves:
 - `lockMaxTime`: Maximum time to spend retrying lock acquisition
 
 ### Bucket Options
-- `WithClock()`: Custom clock implementation for testing
+- `WithClock()`: Custom clock implementation for testing (uses `internal/clock` interface)
 - `WithLogger()`: Custom logger for debugging
 - `WithoutLock()`: Disable distributed locking (for single-node deployments)
-- `WithMemoryBackend()`: Use in-memory backend instead of DynamoDB (for testing and single-node scenarios)
+- `WithMemoryBackend()`: Use in-memory backend via `storage/memory` package
 
 ## Localization Guidelines
 
