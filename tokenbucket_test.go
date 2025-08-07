@@ -212,7 +212,8 @@ func TestTokenBucket(t *testing.T) {
 					}
 
 					// Verify final state - all tokens should be consumed
-					require.NoError(t, bucket.Get(ctx))
+					bucket, err = bucket.Get(ctx)
+					require.NoError(t, err)
 					assert.Equal(t, int64(0), bucket.Available)
 
 					// Additional take should fail
@@ -261,7 +262,8 @@ func TestTokenBucket(t *testing.T) {
 					assert.Equal(t, int64(numGoroutines)-capacity, errorCount, "Expected %d failed takes", numGoroutines-int(capacity))
 
 					// Verify final state - all tokens should be consumed
-					require.NoError(t, bucket.Get(ctx))
+					bucket, err = bucket.Get(ctx)
+					require.NoError(t, err)
 					assert.Equal(t, int64(0), bucket.Available)
 				})
 
@@ -294,7 +296,7 @@ func TestTokenBucket(t *testing.T) {
 						wg.Add(1)
 						go func() {
 							defer wg.Done()
-							if err := bucket.Get(ctx); err != nil {
+							if _, err := bucket.Get(ctx); err != nil {
 								getResults <- err
 								return
 							}
@@ -338,7 +340,8 @@ func TestTokenBucket(t *testing.T) {
 					assert.Equal(t, 0, takeErrorCount, "No Take operations should fail with sufficient tokens")
 
 					// Verify final state
-					require.NoError(t, bucket.Get(ctx))
+					bucket, err = bucket.Get(ctx)
+					require.NoError(t, err)
 					expectedRemaining := capacity - int64(numTakeGoroutines)
 					assert.Equal(t, expectedRemaining, bucket.Available)
 				})
@@ -398,7 +401,8 @@ func TestTokenBucket(t *testing.T) {
 					assert.Equal(t, 3, errorCount, "Exactly 3 takes should fail when tokens are exhausted")
 
 					// Verify final state is consistent
-					require.NoError(t, bucket.Get(ctx))
+					bucket, err = bucket.Get(ctx)
+					require.NoError(t, err)
 					assert.Equal(t, int64(0), bucket.Available, "All refilled tokens should be consumed")
 				})
 
@@ -433,7 +437,7 @@ func TestTokenBucket(t *testing.T) {
 						wg.Add(1)
 						go func() {
 							defer wg.Done()
-							if err := bucket.Get(ctx); err != nil {
+							if _, err := bucket.Get(ctx); err != nil {
 								getResults <- err
 								return
 							}
@@ -490,7 +494,8 @@ func TestTokenBucket(t *testing.T) {
 					assert.GreaterOrEqual(t, takeSuccessCount, 1, "At least some Take operations should succeed")
 
 					// Verify final state is consistent
-					require.NoError(t, bucket.Get(ctx))
+					bucket, err = bucket.Get(ctx)
+					require.NoError(t, err)
 					expectedRemaining := capacity - int64(takeSuccessCount)
 					assert.Equal(t, expectedRemaining, bucket.Available, "Final state should be consistent")
 					assert.GreaterOrEqual(t, bucket.Available, int64(0), "Available tokens should not be negative")
@@ -549,7 +554,8 @@ func TestTokenBucket(t *testing.T) {
 				bucket, err := tokenbucket.NewBucket(capacity, fillRate, dimension, backend)
 				require.NoError(t, err)
 
-				require.NoError(t, bucket.Get(ctx))
+				bucket, err = bucket.Get(ctx)
+				require.NoError(t, err)
 				assert.Equal(t, capacity, bucket.Capacity)
 				assert.Equal(t, fillRate, bucket.FillRate)
 				assert.Equal(t, dimension, bucket.Dimension)

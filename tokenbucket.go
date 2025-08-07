@@ -13,9 +13,11 @@ type TokenBucket interface {
 	// If no tokens are available, it returns an ErrNoTokensAvailable error.
 	Take(ctx context.Context) error
 
-	// Get attempts to get the current state of the bucket, including available tokens and last updated timestamp.
+	// Get returns the current state of the bucket, including available tokens and last updated timestamp.
 	Get(ctx context.Context) (*Bucket, error)
 }
+
+var _ TokenBucket = (*Bucket)(nil)
 
 type Bucket struct {
 	Capacity    int64  // Maximum number of tokens in the bucket
@@ -101,16 +103,22 @@ func (b *Bucket) Take(ctx context.Context) error {
 	return nil
 }
 
-func (b *Bucket) Get(ctx context.Context) error {
+func (b *Bucket) Get(ctx context.Context) (*Bucket, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	state, err := b.backend.State(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	b.Available = state.Available
-	b.LastUpdated = state.Last
-	return nil
+	return &Bucket{
+		Capacity:    b.Capacity,
+		FillRate:    b.FillRate,
+		Available:   state.Available,
+		LastUpdated: state.Last,
+		Dimension:   b.Dimension,
+		backend:     b.backend,
+		clock:       b.clock,
+	}, nil
 }
