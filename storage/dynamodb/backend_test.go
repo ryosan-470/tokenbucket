@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/ryosan-470/tokenbucket/storage"
+	"github.com/ryosan-470/tokenbucket"
 )
 
 const (
@@ -35,7 +35,7 @@ func TestBackend(t *testing.T) {
 		backend := NewBackend(infra.Client, "non-existent-key", props, 1*time.Hour)
 		state, err := backend.State(context.Background())
 		require.NoError(t, err)
-		assert.Equal(t, storage.State{}, state)
+		assert.Equal(t, tokenbucket.NewState(0, 0), state)
 	})
 
 	t.Run("SetState and State", func(t *testing.T) {
@@ -43,18 +43,14 @@ func TestBackend(t *testing.T) {
 		props := infra.CreateTokenBucketTable(t, fmt.Sprintf("%s%s", testBackendTableNamePrefix, uuid.NewString()))
 		defer infra.DeleteTable(t, props.TableName)
 		backend := NewBackend(infra.Client, testBackendPartitionKey, props, 1*time.Hour)
-
-		initialState := storage.State{
-			Last:      123,
-			Available: 456,
-		}
+		initialState := tokenbucket.NewState(123, 456)
 
 		err := backend.SetState(ctx, initialState)
 		require.NoError(t, err)
 
 		state, err := backend.State(ctx)
 		require.NoError(t, err)
-		assert.Equal(t, initialState.Last, state.Last)
+		assert.Equal(t, initialState.LastUpdated, state.LastUpdated)
 		assert.Equal(t, initialState.Available, state.Available)
 	})
 
@@ -63,12 +59,8 @@ func TestBackend(t *testing.T) {
 		props := infra.CreateTokenBucketTable(t, fmt.Sprintf("%s%s", testBackendTableNamePrefix, uuid.NewString()))
 		defer infra.DeleteTable(t, props.TableName)
 		backend := NewBackend(infra.Client, testBackendPartitionKey, props, 1*time.Hour)
+		initialState := tokenbucket.NewState(123, 456)
 
-		// Set some initial state
-		initialState := storage.State{
-			Last:      123,
-			Available: 456,
-		}
 		err := backend.SetState(ctx, initialState)
 		require.NoError(t, err)
 
@@ -79,7 +71,7 @@ func TestBackend(t *testing.T) {
 		// Verify state in DB is reset
 		state, err := backend.State(ctx)
 		require.NoError(t, err)
-		assert.Equal(t, int64(0), state.Last)
+		assert.Equal(t, int64(0), state.LastUpdated)
 		assert.Equal(t, int64(0), state.Available)
 	})
 
@@ -102,17 +94,17 @@ func TestBackend(t *testing.T) {
 		require.NoError(t, err)
 
 		// Backend1 updates the state successfully
-		err = backend1.SetState(ctx, storage.State{Last: 1, Available: 1})
+		err = backend1.SetState(ctx, tokenbucket.NewState(1, 1))
 		require.NoError(t, err)
 
 		// Backend2 tries to update with an old version (0), which should fail
-		err = backend2.SetState(ctx, storage.State{Last: 2, Available: 2})
+		err = backend2.SetState(ctx, tokenbucket.NewState(2, 2))
 		require.Error(t, err, "expected an error due to conditional check failure")
 
 		// Verify the state in DB is still from backend1's update
 		state, err := backend2.State(ctx)
 		require.NoError(t, err)
-		assert.Equal(t, int64(1), state.Last)
+		assert.Equal(t, int64(1), state.LastUpdated)
 		assert.Equal(t, int64(1), state.Available)
 	})
 
@@ -146,7 +138,7 @@ func TestBackend(t *testing.T) {
 				}
 
 				// Try to update the state
-				err = backend.SetState(ctx, storage.State{Last: 1, Available: 1})
+				err = backend.SetState(ctx, tokenbucket.NewState(1, 1))
 				if err == nil {
 					mu.Lock()
 					successCount++
