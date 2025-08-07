@@ -13,22 +13,25 @@ type TokenBucket interface {
 	// If no tokens are available, it returns an ErrNoTokensAvailable error.
 	Take(ctx context.Context) error
 
-	// Get returns the current state of the bucket, including available tokens and last updated timestamp.
-	Get(ctx context.Context) (*Bucket, error)
+	// GetState returns the current state of the bucket, including available tokens and last updated timestamp.
+	GetState(ctx context.Context) (State, error)
 }
 
 var _ TokenBucket = (*Bucket)(nil)
 
 type Bucket struct {
-	Capacity    int64  // Maximum number of tokens in the bucket
-	FillRate    int64  // Rate at which tokens are added to the bucket (tokens per second)
-	Available   int64  // Current number of available tokens
-	LastUpdated int64  // Timestamp of the last update in milliseconds
-	Dimension   string // Dimension of the token bucket
+	Capacity  int64  // Maximum number of tokens in the bucket
+	FillRate  int64  // Rate at which tokens are added to the bucket (tokens per second)
+	Dimension string // Dimension of the token bucket
 
 	backend storage.Storage
 	clock   clock.Clock  // Clock for time-related operations
 	mu      sync.RWMutex // RWMutex to protect concurrent access to the bucket state
+}
+
+type State struct {
+	Available   int64 // Number of available tokens
+	LastUpdated int64 // Last update timestamp in nanoseconds
 }
 
 type options struct {
@@ -54,7 +57,6 @@ func NewBucket(capacity, fillRate int64, dimension string, backend storage.Stora
 	return &Bucket{
 		Capacity:  capacity,
 		FillRate:  fillRate,
-		Available: capacity,
 		Dimension: dimension,
 
 		backend: backend,
@@ -98,27 +100,21 @@ func (b *Bucket) Take(ctx context.Context) error {
 		return err
 	}
 
-	b.Available = state.Available
-	b.LastUpdated = state.Last
 	return nil
 }
 
-func (b *Bucket) Get(ctx context.Context) (*Bucket, error) {
+// GetState returns the current state of the bucket including available tokens and last updated timestamp
+func (b *Bucket) GetState(ctx context.Context) (State, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
-	state, err := b.backend.State(ctx)
+	s, err := b.backend.State(ctx)
 	if err != nil {
-		return nil, err
+		return State{}, err
 	}
 
-	return &Bucket{
-		Capacity:    b.Capacity,
-		FillRate:    b.FillRate,
-		Available:   state.Available,
-		LastUpdated: state.Last,
-		Dimension:   b.Dimension,
-		backend:     b.backend,
-		clock:       b.clock,
+	return State{
+		Available:   s.Available,
+		LastUpdated: s.Last,
 	}, nil
 }
