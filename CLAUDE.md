@@ -14,7 +14,7 @@ The codebase is organized as follows:
   - `tokenbucket.go`: `TokenBucket` interface with `Take()` and `Get()` methods and `Bucket` struct implementation
   - `tokenbucket_test.go`: Unit tests for the main tokenbucket functionality
   - `main_test.go`: Test utilities and setup for the root package
-  - Uses the `github.com/mennanov/limiters` library as the underlying implementation
+  - Custom implementation with selective use of `github.com/mennanov/limiters` library for DynamoDB utilities
   - `errors.go`: Custom error definitions for the library
 
 - **Internal utilities (`internal/`)**: Shared utilities
@@ -24,13 +24,14 @@ The codebase is organized as follows:
   - `clock/`: Clock abstraction for testable time operations
     - `clock.go`: Clock interface and system clock implementation
 
+- **Root package (continued)**:
+  - `state.go`: Domain state model and repository interface
+
 - **Storage layer (`storage/`)**: Storage backends and interfaces
-  - `state.go`: Common storage interface and state structure
   - `memory/`: In-memory storage backend
     - `backend.go`: Memory-based storage implementation
     - `backend_test.go`: Tests for memory backend
   - `dynamodb/`: DynamoDB-specific implementations
-    - `adapter.go`: Adapter for limiters library integration
     - `backend.go`: DynamoDB backend implementation for token bucket storage
     - `backend_test.go`: Tests for DynamoDB backend functionality
     - `config.go`: Backend configuration for DynamoDB token bucket storage and lock settings
@@ -48,15 +49,42 @@ The codebase is organized as follows:
   - `tokenbucket_single_dimension_test.go`: Single dimension benchmark tests
   - `tokenbucket_multiple_dimension_test.go`: Multiple dimension benchmark tests
 
+## Domain-Driven Design (DDD) Implementation
+
+This project follows **Domain-Driven Design** principles to create a maintainable and extensible rate limiting library:
+
+### Domain Layer (Core Business Logic)
+- **Entities**: `Bucket` struct encapsulating token bucket behavior and business rules
+- **Value Objects**: `State` struct representing immutable bucket state
+- **Domain Services**: Token refill algorithms and rate limiting logic
+- **Repository Interface**: `TokenBucketStateRepository` abstracting storage concerns
+- **Domain Events**: Custom errors (`ErrNoTokensAvailable`) representing domain-specific outcomes
+
+### Application Layer
+- **Use Cases**: `Take()` and `GetState()` methods orchestrating domain operations
+- **Configuration**: Factory patterns for creating different storage backends
+
+### Infrastructure Layer
+- **Persistence**: DynamoDB and in-memory storage implementations
+- **External Services**: DynamoDB table utilities and distributed locking interface from `limiters` library
+- **Distributed Coordination**: DynamoDB-based distributed locking
+
+### Key DDD Benefits Achieved
+- **Dependency Inversion**: Domain layer depends only on abstractions, not concrete implementations
+- **Separation of Concerns**: Clear boundaries between business logic and technical concerns
+- **Testability**: Clock abstraction and repository interfaces enable comprehensive testing
+- **Extensibility**: New storage backends can be added without changing domain logic
+
 ## Key Design Patterns
 
-- **Interface Segregation**: Clean separation between token bucket interface and storage backend via `storage.Storage` interface
-- **Adapter Pattern**: Seamless integration with `limiters` library through adapter layer
+- **Repository Pattern**: `TokenBucketStateRepository` interface for storage abstraction
+- **Interface Segregation**: Uses only specific interfaces from `limiters` library (DistLocker, DynamoDBTableProperties)  
 - **Dependency Injection**: Backend storage is injected via configuration
-- **Distributed Locking**: Custom DynamoDB-based lock implementation with automatic cleanup via TTL
+- **Factory Pattern**: Configuration objects create appropriate backend implementations
+- **Strategy Pattern**: Different storage backends (DynamoDB, Memory) implementing same interface
 - **Clock Abstraction**: Testable time operations through `internal/clock` interface
-- **Error Handling**: Custom errors defined in `errors.go`
 - **Options Pattern**: Functional options for configuring bucket behavior
+- **Distributed Locking**: Custom DynamoDB-based lock implementation with automatic cleanup via TTL
 - **Testcontainers**: Isolated testing with DynamoDB Local containers
 
 ## Development Commands
@@ -127,7 +155,7 @@ The project includes comprehensive test coverage:
 ## Dependencies
 
 - **AWS SDK v2**: For DynamoDB operations (`github.com/aws/aws-sdk-go-v2/service/dynamodb`)
-- **github.com/mennanov/limiters**: Core token bucket and rate limiting logic
+- **github.com/mennanov/limiters**: DynamoDB table utilities and distributed locking interface
 - **github.com/cenkalti/backoff/v5**: Retry logic with exponential backoff
 - **github.com/google/uuid**: UUID generation for lock ownership
 - **testcontainers**: For isolated testing with DynamoDB Local (`github.com/testcontainers/testcontainers-go`)
@@ -177,9 +205,10 @@ Typical usage involves:
 
 ### Bucket Options
 - `WithClock()`: Custom clock implementation for testing (uses `internal/clock` interface)
-- `WithLogger()`: Custom logger for debugging
-- `WithoutLock()`: Disable distributed locking (for single-node deployments)
-- `WithMemoryBackend()`: Use in-memory backend via `storage/memory` package
+
+### Lock Options (DynamoDB backend)
+- `WithBackoffMaxTries()`: Maximum retry attempts for lock acquisition
+- `WithBackoffMaxTime()`: Maximum time to spend retrying lock acquisition
 
 ## Localization Guidelines
 
