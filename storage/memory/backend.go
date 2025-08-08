@@ -21,6 +21,9 @@ func NewBackend() *MemoryBackend {
 }
 
 func (m *MemoryBackend) State(ctx context.Context) (tokenbucket.State, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	return tokenbucket.NewState(m.Available, m.LastUpdated), nil
 }
 
