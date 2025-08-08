@@ -9,7 +9,7 @@ import (
 
 type MemoryBackend struct {
 	Available   int64 // Number of available tokens
-	LastUpdated int64 // LastUpdated update timestamp in nanoseconds
+	LastUpdated int64 // Last update timestamp in nanoseconds
 
 	mu sync.RWMutex // Mutex to protect concurrent access
 }
