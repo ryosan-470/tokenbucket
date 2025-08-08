@@ -56,29 +56,29 @@ func (b *DynamoDBBackend) State(ctx context.Context) (tokenbucket.State, error) 
 		Key:       b.keys,
 	})
 	if err != nil {
-		return tokenbucket.State{}, err
+		return tokenbucket.NewState(0, 0), err
 	}
 
 	if res.Item == nil {
-		return tokenbucket.State{}, nil
+		return tokenbucket.NewState(0, 0), nil
 	}
 
 	return b.makeTokenBucketState(res.Item)
 }
 
 func (b *DynamoDBBackend) makeTokenBucketState(item map[string]types.AttributeValue) (tokenbucket.State, error) {
-	state := tokenbucket.State{}
+	state := tokenbucket.NewState(0, 0)
 
 	if err := attributevalue.Unmarshal(item[attributeNameBackendLast], &state.LastUpdated); err != nil {
-		return tokenbucket.State{}, err
+		return tokenbucket.NewState(0, 0), err
 	}
 
 	if err := attributevalue.Unmarshal(item[attributeNameBackendAvailable], &state.Available); err != nil {
-		return tokenbucket.State{}, err
+		return tokenbucket.NewState(0, 0), err
 	}
 
 	if err := attributevalue.Unmarshal(item[attributeNameBackendVersion], &b.latestVersion); err != nil {
-		return tokenbucket.State{}, err
+		return tokenbucket.NewState(0, 0), err
 	}
 
 	return state, nil
