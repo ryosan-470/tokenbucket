@@ -11,10 +11,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/mennanov/limiters"
 
-	"github.com/ryosan-470/tokenbucket/storage"
+	"github.com/ryosan-470/tokenbucket"
 )
 
-type Backend struct {
+type DynamoDBBackend struct {
 	client        *dynamodb.Client
 	tableProps    limiters.DynamoDBTableProperties
 	partitionKey  string
@@ -29,7 +29,9 @@ const (
 	attributeNameBackendAvailable = "Available"
 )
 
-func NewBackend(client *dynamodb.Client, partitionKey string, tableProps limiters.DynamoDBTableProperties, ttl time.Duration) storage.Storage {
+var _ tokenbucket.TokenBucketStateRepository = (*DynamoDBBackend)(nil)
+
+func NewBackend(client *dynamodb.Client, partitionKey string, tableProps limiters.DynamoDBTableProperties, ttl time.Duration) *DynamoDBBackend {
 	keys := map[string]types.AttributeValue{
 		tableProps.PartitionKeyName: &types.AttributeValueMemberS{Value: partitionKey},
 	}
@@ -38,7 +40,7 @@ func NewBackend(client *dynamodb.Client, partitionKey string, tableProps limiter
 		keys[tableProps.SortKeyName] = &types.AttributeValueMemberS{Value: partitionKey}
 	}
 
-	return &Backend{
+	return &DynamoDBBackend{
 		client:        client,
 		tableProps:    tableProps,
 		partitionKey:  partitionKey,
@@ -48,41 +50,41 @@ func NewBackend(client *dynamodb.Client, partitionKey string, tableProps limiter
 	}
 }
 
-func (b *Backend) State(ctx context.Context) (storage.State, error) {
+func (b *DynamoDBBackend) State(ctx context.Context) (tokenbucket.State, error) {
 	res, err := b.client.GetItem(ctx, &dynamodb.GetItemInput{
 		TableName: aws.String(b.tableProps.TableName),
 		Key:       b.keys,
 	})
 	if err != nil {
-		return storage.State{}, err
+		return tokenbucket.NewState(0, 0), err
 	}
 
 	if res.Item == nil {
-		return storage.State{}, nil
+		return tokenbucket.NewState(0, 0), nil
 	}
 
 	return b.makeTokenBucketState(res.Item)
 }
 
-func (b *Backend) makeTokenBucketState(item map[string]types.AttributeValue) (storage.State, error) {
-	state := storage.State{}
+func (b *DynamoDBBackend) makeTokenBucketState(item map[string]types.AttributeValue) (tokenbucket.State, error) {
+	state := tokenbucket.NewState(0, 0)
 
-	if err := attributevalue.Unmarshal(item[attributeNameBackendLast], &state.Last); err != nil {
-		return storage.State{}, err
+	if err := attributevalue.Unmarshal(item[attributeNameBackendLast], &state.LastUpdated); err != nil {
+		return tokenbucket.NewState(0, 0), err
 	}
 
 	if err := attributevalue.Unmarshal(item[attributeNameBackendAvailable], &state.Available); err != nil {
-		return storage.State{}, err
+		return tokenbucket.NewState(0, 0), err
 	}
 
 	if err := attributevalue.Unmarshal(item[attributeNameBackendVersion], &b.latestVersion); err != nil {
-		return storage.State{}, err
+		return tokenbucket.NewState(0, 0), err
 	}
 
 	return state, nil
 }
 
-func (b *Backend) SetState(ctx context.Context, state storage.State) error {
+func (b *DynamoDBBackend) SetState(ctx context.Context, state tokenbucket.State) error {
 	updateExpr := makeUpdateExpressionBuilder(state, b.latestVersion+1)
 	cond := expression.Name(attributeNameBackendVersion).AttributeNotExists().Or(
 		expression.Name(attributeNameBackendVersion).Equal(expression.Value(b.latestVersion)),
@@ -111,11 +113,8 @@ func (b *Backend) SetState(ctx context.Context, state storage.State) error {
 	return nil
 }
 
-func (b *Backend) Reset(ctx context.Context) error {
-	updateExpr := makeUpdateExpressionBuilder(storage.State{
-		Last:      0,
-		Available: 0,
-	}, 0)
+func (b *DynamoDBBackend) Reset(ctx context.Context) error {
+	updateExpr := makeUpdateExpressionBuilder(tokenbucket.NewState(0, 0), 0)
 
 	expr, err := expression.NewBuilder().WithUpdate(updateExpr).Build()
 	if err != nil {
@@ -139,9 +138,9 @@ func (b *Backend) Reset(ctx context.Context) error {
 	return nil
 }
 
-func makeUpdateExpressionBuilder(state storage.State, latestVersion int64) expression.UpdateBuilder {
+func makeUpdateExpressionBuilder(state tokenbucket.State, latestVersion int64) expression.UpdateBuilder {
 	return expression.Set(
-		expression.Name(attributeNameBackendLast), expression.Value(state.Last),
+		expression.Name(attributeNameBackendLast), expression.Value(state.LastUpdated),
 	).Set(
 		expression.Name(attributeNameBackendAvailable), expression.Value(state.Available),
 	).Set(

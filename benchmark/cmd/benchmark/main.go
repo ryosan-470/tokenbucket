@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/ryosan-470/tokenbucket"
-	"github.com/ryosan-470/tokenbucket/storage"
 	"github.com/ryosan-470/tokenbucket/storage/memory"
 
 	"github.com/ryosan-470/tokenbucket/benchmark"
@@ -288,7 +287,7 @@ func getProvider(cfg Config) (benchmarkstorage.Provider, error) {
 	}
 }
 
-func getBackend(cfg Config, provider benchmarkstorage.Provider) (storage.Storage, error) {
+func getBackend(cfg Config, provider benchmarkstorage.Provider) (tokenbucket.TokenBucketStateRepository, error) {
 	switch cfg.BackendType {
 	case "custom":
 		ddbCfg := provider.CreateBucketConfig(cfg.dimension)

@@ -15,7 +15,6 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/ryosan-470/tokenbucket"
-	"github.com/ryosan-470/tokenbucket/storage"
 	dynamodbstorage "github.com/ryosan-470/tokenbucket/storage/dynamodb"
 )
 
@@ -117,8 +116,8 @@ func (h *LocalProvider) CreateBucketConfig(dimension string) *dynamodbstorage.Bu
 }
 
 // CreateBucket creates a TokenBucket with the specified configuration
-func (h *LocalProvider) CreateBucket(capacity, fillRate int64, dimension string, backend storage.Storage, opts ...tokenbucket.Option) (*tokenbucket.Bucket, error) {
-	return tokenbucket.NewBucket(capacity, fillRate, dimension, backend, opts...)
+func (h *LocalProvider) CreateBucket(capacity, fillRate int64, dimension string, repo tokenbucket.TokenBucketStateRepository, opts ...tokenbucket.Option) (*tokenbucket.Bucket, error) {
+	return tokenbucket.NewBucket(capacity, fillRate, dimension, repo, opts...)
 }
 
 // CreateLockBackendConfig creates a LockBackendConfig for managing locks
